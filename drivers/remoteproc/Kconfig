@@ -64,4 +64,12 @@ config DA8XX_REMOTEPROC
 	  It's safe to say n here if you're not interested in multimedia
 	  offloading.
 
+config DUMMY_REMOTEPROC
+	tristate "Dummy remoteproc support"
+	select REMOTEPROC
+	select RPMSG
+	help
+	  Say y here to enable support for a dummy remote processor driver
+	  via the remote processor framework.
+
 endmenu
