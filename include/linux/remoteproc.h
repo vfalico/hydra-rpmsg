@@ -413,7 +413,7 @@ struct rproc {
 	void *priv;
 	const struct rproc_ops *ops;
 	struct device dev;
-	const struct rproc_fw_ops *fw_ops;
+	struct rproc_fw_ops *fw_ops;
 	atomic_t power;
 	unsigned int state;
 	struct mutex lock;
