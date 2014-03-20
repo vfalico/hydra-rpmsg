@@ -923,8 +923,10 @@ static void rproc_fw_config_virtio(const struct firmware *fw, void *context)
 	/* count the number of notify-ids */
 	rproc->max_notifyid = -1;
 	ret = rproc_handle_resources(rproc, tablesz, rproc_count_vrings_handler);
-	if (ret)
+	if (ret) {
+		kfree(rproc->cached_table);
 		goto out;
+	}
 
 	/* look for virtio devices and register them */
 	ret = rproc_handle_resources(rproc, tablesz, rproc_vdev_handler);
