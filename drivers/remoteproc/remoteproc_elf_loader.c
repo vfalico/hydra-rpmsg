@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2011 Texas Instruments, Inc.
  * Copyright (C) 2011 Google, Inc.
+ * Copyright (C) 2014 Huawei Technologies
  *
  * Ohad Ben-Cohen <ohad@wizery.com>
  * Brian Swetland <swetland@google.com>
@@ -12,6 +13,7 @@
  * Robert Tivy <rtivy@ti.com>
  * Armando Uribe De Leon <x0095078@ti.com>
  * Sjur Brændeland <sjur.brandeland@stericsson.com>
+ * Paul Mundt <paul.mundt@huawei.com>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -44,27 +46,19 @@ rproc_elf_sanity_check(struct rproc *rproc, const struct firmware *fw)
 {
 	const char *name = rproc->firmware;
 	struct device *dev = &rproc->dev;
-	struct elf32_hdr *ehdr;
-	char class;
+	Elf_Ehdr *ehdr;
 
 	if (!fw) {
 		dev_err(dev, "failed to load %s\n", name);
 		return -EINVAL;
 	}
 
-	if (fw->size < sizeof(struct elf32_hdr)) {
+	if (fw->size < sizeof(Elf_Ehdr)) {
 		dev_err(dev, "Image is too small\n");
 		return -EINVAL;
 	}
 
-	ehdr = (struct elf32_hdr *)fw->data;
-
-	/* We only support ELF32 at this point */
-	class = ehdr->e_ident[EI_CLASS];
-	if (class != ELFCLASS32) {
-		dev_err(dev, "Unsupported class: %d\n", class);
-		return -EINVAL;
-	}
+	ehdr = (Elf_Ehdr *)fw->data;
 
 	/* We assume the firmware has the same endianness as the host */
 # ifdef __LITTLE_ENDIAN
@@ -76,7 +70,7 @@ rproc_elf_sanity_check(struct rproc *rproc, const struct firmware *fw)
 		return -EINVAL;
 	}
 
-	if (fw->size < ehdr->e_shoff + sizeof(struct elf32_shdr)) {
+	if (fw->size < ehdr->e_shoff + sizeof(Elf_Shdr)) {
 		dev_err(dev, "Image is too small\n");
 		return -EINVAL;
 	}
@@ -113,7 +107,7 @@ rproc_elf_sanity_check(struct rproc *rproc, const struct firmware *fw)
 static unsigned long
 rproc_elf_get_boot_addr(struct rproc *rproc, const struct firmware *fw)
 {
-	struct elf32_hdr *ehdr  = (struct elf32_hdr *)fw->data;
+	Elf_Ehdr *ehdr  = (Elf_Ehdr *)fw->data;
 
 	return ehdr->e_entry;
 }
@@ -146,13 +140,13 @@ static int
 rproc_elf_load_segments(struct rproc *rproc, const struct firmware *fw)
 {
 	struct device *dev = &rproc->dev;
-	struct elf32_hdr *ehdr;
-	struct elf32_phdr *phdr;
+	Elf_Ehdr *ehdr;
+	Elf_Phdr *phdr;
 	int i, ret = 0;
 	const u8 *elf_data = fw->data;
 
-	ehdr = (struct elf32_hdr *)elf_data;
-	phdr = (struct elf32_phdr *)(elf_data + ehdr->e_phoff);
+	ehdr = (Elf_Ehdr *)elf_data;
+	phdr = (Elf_Phdr *)(elf_data + ehdr->e_phoff);
 
 	/* go through the available ELF segments */
 	for (i = 0; i < ehdr->e_phnum; i++, phdr++) {
@@ -208,17 +202,17 @@ rproc_elf_load_segments(struct rproc *rproc, const struct firmware *fw)
 	return ret;
 }
 
-static struct elf32_shdr *
-find_table(struct device *dev, struct elf32_hdr *ehdr, size_t fw_size)
+static Elf_Shdr *
+find_table(struct device *dev, Elf_Ehdr *ehdr, size_t fw_size)
 {
-	struct elf32_shdr *shdr;
+	Elf_Shdr *shdr;
 	int i;
 	const char *name_table;
 	struct resource_table *table = NULL;
 	const u8 *elf_data = (void *)ehdr;
 
 	/* look for the resource table and handle it */
-	shdr = (struct elf32_shdr *)(elf_data + ehdr->e_shoff);
+	shdr = (Elf_Shdr *)(elf_data + ehdr->e_shoff);
 	name_table = elf_data + shdr[ehdr->e_shstrndx].sh_offset;
 
 	for (i = 0; i < ehdr->e_shnum; i++, shdr++) {
@@ -286,13 +280,13 @@ static struct resource_table *
 rproc_elf_find_rsc_table(struct rproc *rproc, const struct firmware *fw,
 			 int *tablesz)
 {
-	struct elf32_hdr *ehdr;
-	struct elf32_shdr *shdr;
+	Elf_Ehdr *ehdr;
+	Elf_Shdr *shdr;
 	struct device *dev = &rproc->dev;
 	struct resource_table *table = NULL;
 	const u8 *elf_data = fw->data;
 
-	ehdr = (struct elf32_hdr *)elf_data;
+	ehdr = (Elf_Ehdr *)elf_data;
 
 	shdr = find_table(dev, ehdr, fw->size);
 	if (!shdr)
@@ -318,8 +312,8 @@ rproc_elf_find_rsc_table(struct rproc *rproc, const struct firmware *fw,
 static struct resource_table *
 rproc_elf_find_loaded_rsc_table(struct rproc *rproc, const struct firmware *fw)
 {
-	struct elf32_hdr *ehdr = (struct elf32_hdr *)fw->data;
-	struct elf32_shdr *shdr;
+	Elf_Ehdr *ehdr = (Elf_Ehdr *)fw->data;
+	Elf_Shdr *shdr;
 
 	shdr = find_table(&rproc->dev, ehdr, fw->size);
 	if (!shdr)
