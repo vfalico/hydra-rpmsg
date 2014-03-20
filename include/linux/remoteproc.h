@@ -164,8 +164,8 @@ enum fw_resource_type {
  * (mainly for debugging purposes).
  */
 struct fw_rsc_carveout {
-	u32 da;
-	u32 pa;
+	unsigned long da;
+	unsigned long pa;
 	u32 len;
 	u32 flags;
 	u32 reserved;
@@ -202,8 +202,8 @@ struct fw_rsc_carveout {
  * access to physical addresses that are outside those ranges.
  */
 struct fw_rsc_devmem {
-	u32 da;
-	u32 pa;
+	unsigned long da;
+	unsigned long pa;
 	u32 len;
 	u32 flags;
 	u32 reserved;
@@ -227,7 +227,7 @@ struct fw_rsc_devmem {
  * user via debugfs entries (called trace0, trace1, etc..).
  */
 struct fw_rsc_trace {
-	u32 da;
+	unsigned long da;
 	u32 len;
 	u32 reserved;
 	u8 name[32];
@@ -251,7 +251,7 @@ struct fw_rsc_trace {
  * dynamically allocation of the vring's device address is supported.
  */
 struct fw_rsc_vdev_vring {
-	u32 da;
+	unsigned long da;
 	u32 align;
 	u32 num;
 	u32 notifyid;
@@ -318,7 +318,7 @@ struct rproc_mem_entry {
 	void *va;
 	dma_addr_t dma;
 	int len;
-	u32 da;
+	unsigned long da;
 	void *priv;
 	struct list_head node;
 };
@@ -423,7 +423,7 @@ struct rproc {
 	struct list_head carveouts;
 	struct list_head mappings;
 	struct completion firmware_loading_complete;
-	u32 bootaddr;
+	unsigned long bootaddr;
 	struct list_head rvdevs;
 	struct idr notifyids;
 	int index;
@@ -456,7 +456,7 @@ struct rproc_vring {
 	void *va;
 	dma_addr_t dma;
 	int len;
-	u32 da;
+	unsigned long da;
 	u32 align;
 	int notifyid;
 	struct rproc_vdev *rvdev;

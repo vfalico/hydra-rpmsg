@@ -80,8 +80,8 @@ struct virtproc_info {
  */
 struct rpmsg_channel_info {
 	char name[RPMSG_NAME_SIZE];
-	u32 src;
-	u32 dst;
+	unsigned long src;
+	unsigned long dst;
 };
 
 #define to_rpmsg_channel(d) container_of(d, struct rpmsg_channel, dev)
@@ -131,8 +131,8 @@ field##_show(struct device *dev,					\
 
 /* for more info, see Documentation/ABI/testing/sysfs-bus-rpmsg */
 rpmsg_show_attr(name, id.name, "%s\n");
-rpmsg_show_attr(src, src, "0x%x\n");
-rpmsg_show_attr(dst, dst, "0x%x\n");
+rpmsg_show_attr(src, src, "0x%lx\n");
+rpmsg_show_attr(dst, dst, "0x%lx\n");
 rpmsg_show_attr(announce, announce ? "true" : "false", "%s\n");
 
 /*
@@ -213,7 +213,7 @@ static void __ept_release(struct kref *kref)
 /* for more info, see below documentation of rpmsg_create_ept() */
 static struct rpmsg_endpoint *__rpmsg_create_ept(struct virtproc_info *vrp,
 		struct rpmsg_channel *rpdev, rpmsg_rx_cb_t cb,
-		void *priv, u32 addr)
+		void *priv, unsigned long addr)
 {
 	int id_min, id_max, id;
 	struct rpmsg_endpoint *ept;
@@ -302,7 +302,7 @@ free_ept:
  * Returns a pointer to the endpoint on success, or NULL on error.
  */
 struct rpmsg_endpoint *rpmsg_create_ept(struct rpmsg_channel *rpdev,
-				rpmsg_rx_cb_t cb, void *priv, u32 addr)
+				rpmsg_rx_cb_t cb, void *priv, unsigned long addr)
 {
 	return __rpmsg_create_ept(rpdev->vrp, rpdev, cb, priv, addr);
 }
@@ -507,7 +507,7 @@ static struct rpmsg_channel *rpmsg_create_channel(struct virtproc_info *vrp,
 	if (tmp) {
 		/* decrement the matched device's refcount back */
 		put_device(tmp);
-		dev_err(dev, "channel %s:%x:%x already exist\n",
+		dev_err(dev, "channel %s:%lx:%lx already exist\n",
 				chinfo->name, chinfo->src, chinfo->dst);
 		return NULL;
 	}
@@ -682,7 +682,7 @@ static void rpmsg_downref_sleepers(struct virtproc_info *vrp)
  *
  * Returns 0 on success and an appropriate error value on failure.
  */
-int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
+int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, unsigned long dst,
 					void *data, int len, bool wait)
 {
 	struct virtproc_info *vrp = rpdev->vrp;
@@ -693,7 +693,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 
 	/* bcasting isn't allowed */
 	if (src == RPMSG_ADDR_ANY || dst == RPMSG_ADDR_ANY) {
-		dev_err(dev, "invalid addr (src 0x%x, dst 0x%x)\n", src, dst);
+		dev_err(dev, "invalid addr (src 0x%lx, dst 0x%lx)\n", src, dst);
 		return -EINVAL;
 	}
 
@@ -748,7 +748,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	msg->reserved = 0;
 	memcpy(msg->data, data, len);
 
-	dev_dbg(dev, "TX From 0x%x, To 0x%x, Len %d, Flags %d, Reserved %d\n",
+	dev_dbg(dev, "TX From 0x%lx, To 0x%lx, Len %d, Flags %d, Reserved %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio TX: ", DUMP_PREFIX_NONE, 16, 1,
@@ -785,7 +785,7 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 	struct scatterlist sg;
 	int err;
 
-	dev_dbg(dev, "From: 0x%x, To: 0x%x, Len: %d, Flags: %d, Reserved: %d\n",
+	dev_dbg(dev, "From: 0x%lx, To: 0x%lx, Len: %d, Flags: %d, Reserved: %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio RX: ", DUMP_PREFIX_NONE, 16, 1,
@@ -891,7 +891,7 @@ static void rpmsg_xmit_done(struct virtqueue *svq)
 
 /* invoked when a name service announcement arrives */
 static void rpmsg_ns_cb(struct rpmsg_channel *rpdev, void *data, int len,
-							void *priv, u32 src)
+						void *priv, unsigned long src)
 {
 	struct rpmsg_ns_msg *msg = data;
 	struct rpmsg_channel *newch;
@@ -923,7 +923,7 @@ static void rpmsg_ns_cb(struct rpmsg_channel *rpdev, void *data, int len,
 	/* don't trust the remote processor for null terminating the name */
 	msg->name[RPMSG_NAME_SIZE - 1] = '\0';
 
-	dev_info(dev, "%sing channel %s addr 0x%x\n",
+	dev_info(dev, "%sing channel %s addr 0x%lx\n",
 			msg->flags & RPMSG_NS_DESTROY ? "destroy" : "creat",
 			msg->name, msg->addr);
 

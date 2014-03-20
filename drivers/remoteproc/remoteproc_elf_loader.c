@@ -110,8 +110,8 @@ rproc_elf_sanity_check(struct rproc *rproc, const struct firmware *fw)
  * Note that the boot address is not a configurable property of all remote
  * processors. Some will always boot at a specific hard-coded address.
  */
-static
-u32 rproc_elf_get_boot_addr(struct rproc *rproc, const struct firmware *fw)
+static unsigned long
+rproc_elf_get_boot_addr(struct rproc *rproc, const struct firmware *fw)
 {
 	struct elf32_hdr *ehdr  = (struct elf32_hdr *)fw->data;
 
@@ -156,27 +156,27 @@ rproc_elf_load_segments(struct rproc *rproc, const struct firmware *fw)
 
 	/* go through the available ELF segments */
 	for (i = 0; i < ehdr->e_phnum; i++, phdr++) {
-		u32 da = phdr->p_paddr;
-		u32 memsz = phdr->p_memsz;
-		u32 filesz = phdr->p_filesz;
-		u32 offset = phdr->p_offset;
+		unsigned long da = phdr->p_paddr;
+		unsigned long memsz = phdr->p_memsz;
+		unsigned long filesz = phdr->p_filesz;
+		unsigned long offset = phdr->p_offset;
 		void *ptr;
 
 		if (phdr->p_type != PT_LOAD)
 			continue;
 
-		dev_dbg(dev, "phdr: type %d da 0x%x memsz 0x%x filesz 0x%x\n",
+		dev_dbg(dev, "phdr: type %d da 0x%lx memsz 0x%lx filesz 0x%lx\n",
 					phdr->p_type, da, memsz, filesz);
 
 		if (filesz > memsz) {
-			dev_err(dev, "bad phdr filesz 0x%x memsz 0x%x\n",
+			dev_err(dev, "bad phdr filesz 0x%lx memsz 0x%lx\n",
 							filesz, memsz);
 			ret = -EINVAL;
 			break;
 		}
 
 		if (offset + filesz > fw->size) {
-			dev_err(dev, "truncated fw: need 0x%x avail 0x%zx\n",
+			dev_err(dev, "truncated fw: need 0x%lx avail 0x%zx\n",
 					offset + filesz, fw->size);
 			ret = -EINVAL;
 			break;
@@ -185,7 +185,7 @@ rproc_elf_load_segments(struct rproc *rproc, const struct firmware *fw)
 		/* grab the kernel address for this device address */
 		ptr = rproc_da_to_va(rproc, da, memsz);
 		if (!ptr) {
-			dev_err(dev, "bad phdr da 0x%x mem 0x%x\n", da, memsz);
+			dev_err(dev, "bad phdr da 0x%lx mem 0x%lx\n", da, memsz);
 			ret = -EINVAL;
 			break;
 		}
@@ -222,8 +222,8 @@ find_table(struct device *dev, struct elf32_hdr *ehdr, size_t fw_size)
 	name_table = elf_data + shdr[ehdr->e_shstrndx].sh_offset;
 
 	for (i = 0; i < ehdr->e_shnum; i++, shdr++) {
-		u32 size = shdr->sh_size;
-		u32 offset = shdr->sh_offset;
+		unsigned long size = shdr->sh_size;
+		unsigned long offset = shdr->sh_offset;
 
 		if (strcmp(name_table + shdr->sh_name, ".resource_table"))
 			continue;

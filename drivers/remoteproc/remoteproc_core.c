@@ -164,7 +164,7 @@ static void rproc_disable_iommu(struct rproc *rproc)
  * but only on kernel direct mapped RAM memory. Instead, we're just using
  * here the output of the DMA API, which should be more correct.
  */
-void *rproc_da_to_va(struct rproc *rproc, u64 da, int len)
+void *rproc_da_to_va(struct rproc *rproc, unsigned long da, int len)
 {
 	struct rproc_mem_entry *carveout;
 	void *ptr = NULL;
@@ -252,7 +252,7 @@ rproc_parse_vring(struct rproc_vdev *rvdev, struct fw_rsc_vdev *rsc, int i)
 	struct fw_rsc_vdev_vring *vring = &rsc->vring[i];
 	struct rproc_vring *rvring = &rvdev->vring[i];
 
-	dev_dbg(dev, "vdev rsc: vring%d: da %x, qsz %d, align %d\n",
+	dev_dbg(dev, "vdev rsc: vring%d: da %lx, qsz %d, align %d\n",
 				i, vring->da, vring->num, vring->align);
 
 	/* make sure reserved bytes are zeroes */
@@ -446,7 +446,7 @@ static int rproc_handle_trace(struct rproc *rproc, struct fw_rsc_trace *rsc,
 
 	rproc->num_traces++;
 
-	dev_dbg(dev, "%s added: va %p, da 0x%x, len 0x%x\n", name, ptr,
+	dev_dbg(dev, "%s added: va %p, da 0x%lx, len 0x%x\n", name, ptr,
 						rsc->da, rsc->len);
 
 	return 0;
@@ -522,7 +522,7 @@ static int rproc_handle_devmem(struct rproc *rproc, struct fw_rsc_devmem *rsc,
 	mapping->len = rsc->len;
 	list_add_tail(&mapping->node, &rproc->mappings);
 
-	dev_dbg(dev, "mapped devmem pa 0x%x, da 0x%x, len 0x%x\n",
+	dev_dbg(dev, "mapped devmem pa 0x%lx, da 0x%lx, len 0x%x\n",
 					rsc->pa, rsc->da, rsc->len);
 
 	return 0;
@@ -572,7 +572,7 @@ static int rproc_handle_carveout(struct rproc *rproc,
 		return -EINVAL;
 	}
 
-	dev_dbg(dev, "carveout rsc: da %x, pa %x, len %x, flags %x\n",
+	dev_dbg(dev, "carveout rsc: da %lx, pa %lx, len %x, flags %x\n",
 			rsc->da, rsc->pa, rsc->len, rsc->flags);
 
 	carveout = kzalloc(sizeof(*carveout), GFP_KERNEL);
@@ -634,8 +634,8 @@ static int rproc_handle_carveout(struct rproc *rproc,
 		mapping->len = rsc->len;
 		list_add_tail(&mapping->node, &rproc->mappings);
 
-		dev_dbg(dev, "carveout mapped 0x%x to 0x%llx\n",
-					rsc->da, (unsigned long long)dma);
+		dev_dbg(dev, "carveout mapped 0x%lx to 0x%llx\n",
+					rsc->da, (u64)dma);
 	}
 
 	/*

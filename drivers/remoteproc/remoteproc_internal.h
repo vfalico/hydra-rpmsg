@@ -42,7 +42,7 @@ struct rproc_fw_ops {
 						const struct firmware *fw);
 	int (*load)(struct rproc *rproc, const struct firmware *fw);
 	int (*sanity_check)(struct rproc *rproc, const struct firmware *fw);
-	u32 (*get_boot_addr)(struct rproc *rproc, const struct firmware *fw);
+	unsigned long (*get_boot_addr)(struct rproc *rproc, const struct firmware *fw);
 };
 
 /* from remoteproc_core.c */
@@ -65,7 +65,7 @@ void rproc_exit_debugfs(void);
 void rproc_free_vring(struct rproc_vring *rvring);
 int rproc_alloc_vring(struct rproc_vdev *rvdev, int i);
 
-void *rproc_da_to_va(struct rproc *rproc, u64 da, int len);
+void *rproc_da_to_va(struct rproc *rproc, unsigned long da, int len);
 int rproc_trigger_recovery(struct rproc *rproc);
 
 static inline
@@ -77,8 +77,8 @@ int rproc_fw_sanity_check(struct rproc *rproc, const struct firmware *fw)
 	return 0;
 }
 
-static inline
-u32 rproc_get_boot_addr(struct rproc *rproc, const struct firmware *fw)
+static inline unsigned long
+rproc_get_boot_addr(struct rproc *rproc, const struct firmware *fw)
 {
 	if (rproc->fw_ops->get_boot_addr)
 		return rproc->fw_ops->get_boot_addr(rproc, fw);
