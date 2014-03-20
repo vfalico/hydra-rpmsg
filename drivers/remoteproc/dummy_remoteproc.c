@@ -16,6 +16,7 @@
 #include <linux/init.h>
 #include <linux/remoteproc.h>
 #include <linux/platform_device.h>
+#include <linux/dma-mapping.h>
 
 static int dummy_rproc_start(struct rproc *rproc)
 {
@@ -48,6 +49,9 @@ static int dummy_rproc_probe(struct platform_device *pdev)
 	rproc = rproc_alloc(&pdev->dev, DRV_NAME, &dummy_rproc_ops, NULL, 0);
 	if (!rproc)
 		return -ENOMEM;
+
+	pdev->dev.coherent_dma_mask = DMA_BIT_MASK(64);
+	pdev->dev.dma_mask = &pdev->dev.coherent_dma_mask;
 
 	platform_set_drvdata(pdev, rproc);
 
