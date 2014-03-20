@@ -34,6 +34,11 @@
 
 #include "remoteproc_internal.h"
 
+#ifdef CONFIG_REMOTEPROC_FW_V2
+#define RPROC_MAX_FW_VERSION	2
+#else
+#define RPROC_MAX_FW_VERSION	1
+#endif
 
 /**
  * rproc_elf64_get_boot_addr() - Get rproc's boot address.
@@ -287,8 +292,8 @@ static Elf64_Shdr *find_elf64_table(struct device *dev, Elf64_Ehdr *ehdr,
 			return NULL;
 		}
 
-		/* we don't support any version beyond the first */
-		if (table->ver != 1) {
+		/* Basic sanity checks for firmware versions */
+		if (!table->ver || table->ver > RPROC_MAX_FW_VERSION) {
 			dev_err(dev, "unsupported fw ver: %d\n", table->ver);
 			return NULL;
 		}
@@ -346,8 +351,8 @@ static Elf32_Shdr *find_elf32_table(struct device *dev, Elf32_Ehdr *ehdr,
 			return NULL;
 		}
 
-		/* we don't support any version beyond the first */
-		if (table->ver != 1) {
+		/* Basic sanity checks for firmware versions */
+		if (!table->ver || table->ver > RPROC_MAX_FW_VERSION) {
 			dev_err(dev, "unsupported fw ver: %d\n", table->ver);
 			return NULL;
 		}

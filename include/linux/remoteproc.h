@@ -164,8 +164,13 @@ enum fw_resource_type {
  * (mainly for debugging purposes).
  */
 struct fw_rsc_carveout {
+#ifdef CONFIG_REMOTEPROC_FW_V2
 	unsigned long da;
 	unsigned long pa;
+#else
+	u32 da;
+	u32 pa;
+#endif
 	u32 len;
 	u32 flags;
 	u32 reserved;
@@ -202,8 +207,13 @@ struct fw_rsc_carveout {
  * access to physical addresses that are outside those ranges.
  */
 struct fw_rsc_devmem {
+#ifdef CONFIG_REMOTEPROC_FW_V2
 	unsigned long da;
 	unsigned long pa;
+#else
+	u32 da;
+	u32 pa;
+#endif
 	u32 len;
 	u32 flags;
 	u32 reserved;
@@ -227,7 +237,11 @@ struct fw_rsc_devmem {
  * user via debugfs entries (called trace0, trace1, etc..).
  */
 struct fw_rsc_trace {
+#ifdef CONFIG_REMOTEPROC_FW_V2
 	unsigned long da;
+#else
+	u32 da;
+#endif
 	u32 len;
 	u32 reserved;
 	u8 name[32];
@@ -251,7 +265,11 @@ struct fw_rsc_trace {
  * dynamically allocation of the vring's device address is supported.
  */
 struct fw_rsc_vdev_vring {
+#ifdef CONFIG_REMOTEPROC_FW_V2
 	unsigned long da;
+#else
+	u32 da;
+#endif
 	u32 align;
 	u32 num;
 	u32 notifyid;

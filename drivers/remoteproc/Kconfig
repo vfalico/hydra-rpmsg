@@ -9,6 +9,11 @@ config REMOTEPROC
 	select VIRTIO
 	select VIRTUALIZATION
 
+config REMOTEPROC_FW_V2
+	bool "Support v2 (64-bit) version of remoteproc firmware" if 64BIT
+	depends on REMOTEPROC
+	default y
+
 config OMAP_REMOTEPROC
 	tristate "OMAP remoteproc support"
 	depends on HAS_DMA
