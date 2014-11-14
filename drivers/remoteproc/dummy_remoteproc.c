@@ -175,13 +175,7 @@ static int dummy_rproc_start(struct rproc *rproc)
 		if (*cmdline_append)
 			sprintf(cmdline_override + strlen(cmdline_override),
 				" %s", cmdline_append);
-#if 0
-		sprintf(cmdline_override, "console=ttyS1,115200n8 earlyprintk=ttyS1,115200n8 memblock=debug acpi_irq_nobalance lapic_timer=1000000 mklinux debug memmap=640K@0 cma=0@0 present_mask=%d memmap=0x2e90000$640K memmap=0xB0340000$0x4e800000 memmap=4G$0xfebf0000 memmap=500M@0x2f400000 apic=debug lpj=333254",
-			1 << (boot_cpu - 1));
-		dummy_handle_pci_handover(rproc, cmdline_override);
-#endif
 	}
-
 
 	cmdline_str = dma_alloc_coherent(rproc->dev.parent, strlen(cmdline_override),
 					 &dma_str, GFP_KERNEL);

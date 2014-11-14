@@ -6,6 +6,7 @@
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
 #include <linux/virtio_ids.h>
+#include <linux/virtio_ring.h>
 #include "dummy_proc.h"
 
 extern struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable;
@@ -85,6 +86,7 @@ static void lproc_virtio_reset(struct virtio_device *vdev)
 static u32 lproc_virtio_get_features(struct virtio_device *vdev)
 {
 	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+	return 0;
 }
 
 static void lproc_virtio_finalize_features(struct virtio_device *vdev)
@@ -104,21 +106,97 @@ static void lproc_virtio_set(struct virtio_device *vdev, unsigned offset,
 	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
 }
 
+int lproc_map_vring(struct rproc_vdev *lvdev, int i)
+{
+	struct lproc *lproc = (struct lproc *)lvdev->rproc;
+	struct device *dev = lproc->dev;
+	struct rproc_vring *lvring = &lvdev->vring[i];
+	struct fw_rsc_vdev *rsc;
+	dma_addr_t dma;
+	void *va;
+	int size, notifyid;
+
+	rsc = (void *)lproc->table_ptr + lvdev->rsc_offset;
+	dma = rsc->vring[i].da;
+	notifyid = rsc->vring[i].notifyid;
+
+	/* actual size of vring (in bytes) */
+	size = PAGE_ALIGN(vring_size(lvring->len, lvring->align));
+
+	va = ioremap_cache(dma,size);
+	if (!va) {
+		printk(KERN_INFO "dma=%p,va=%p,size=%d\n",dma,va,size);
+		dev_err(dev->parent, "ioremap failed\n");
+		return -EINVAL;
+	}
+
+	dev_dbg(dev, "vring%d: va %p dma %llx size %x idr %d\n", i, va,
+				(unsigned long long)dma, size, notifyid);
+
+	lvring->va = va;
+	return 0;
+}
+
+
+static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
+				    unsigned id,
+				    void (*callback)(struct virtqueue *vq),
+				    const char *name)
+{
+	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
+	struct lproc *lproc = (struct lproc *)lvdev->rproc;
+	struct device *dev = lproc->dev;
+	struct rproc_vring *lvring;
+	struct virtqueue *vq;
+	void *addr;
+	int len, size, ret;
+
+	/* we're temporarily limited to two virtqueues per rvdev */
+	if (id >= ARRAY_SIZE(lvdev->vring))
+		return ERR_PTR(-EINVAL);
+
+	ret = lproc_map_vring(lvdev, id);
+	if (ret)
+		return ERR_PTR(ret);
+
+	lvring = &lvdev->vring[id];
+	addr = lvring->va;
+	len = lvring->len;
+
+	dev_dbg(dev, "vring%d: va %p qsz %d notifyid %d\n",
+					id, addr, len, lvring->notifyid);
+
+	/*
+	 * Create the new vq, and tell virtio we're not interested in
+	 * the 'weak' smp barriers, since we're talking with a real device.
+	 */
+	vq = vring_new_virtqueue(len, lvring->align, vdev, false, addr,
+					lproc_virtio_notify, callback, name);
+	if (!vq) {
+		dev_err(dev, "vring_new_virtqueue %s failed\n", name);
+		//lproc_free_vring(lvring);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	lvring->vq = vq;
+	vq->priv = lvring;
+
+	return vq;
+}
+
 static int lproc_virtio_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 		       struct virtqueue *vqs[],
 		       vq_callback_t *callbacks[],
 		       const char *names[])
 {
 	int i, ret;
-#if 0
-	for (i = 0; i < nvqs; i) {
+	for (i = 0; i < nvqs; i++) {
 		vqs[i] = rp_find_vq(vdev, i, callbacks[i], names[i]);
 		if (IS_ERR(vqs[i])) {
 			ret = PTR_ERR(vqs[i]);
 			printk(KERN_INFO "lproc: failed find rp_find_vq\n");
 		}
 	}
-#endif
 	return ret;
 }
 
@@ -140,9 +218,9 @@ static void lproc_vdev_release(struct device *dev)
 	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
 }
 
-void lproc_remove_virtio_dev(struct rproc_vdev *rvdev)
+void lproc_remove_virtio_dev(struct rproc_vdev *lvdev)
 {
-	unregister_virtio_device(&rvdev->vdev);
+	unregister_virtio_device(&lvdev->vdev);
 }
 
 int lproc_add_virtio_dev(struct lproc *lproc, struct rproc_vdev *lvdev, int id)
