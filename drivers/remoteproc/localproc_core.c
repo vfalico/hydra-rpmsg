@@ -10,18 +10,99 @@
 
 extern struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable;
 extern bool is_bsp;
+
+static struct platform_device *localproc_device;
+struct dummy_rproc_resourcetable *lrsc = &dummy_remoteproc_resourcetable;
+
 struct lproc {
 	int max_notifyid;
-	struct platform_device *dev;
+	struct device *dev;
 	struct list_head lvdevs;
 	struct resource_table *table_ptr;
 	struct resource_table *cached_table;
 	u32 table_csum;
 };
 
-static struct platform_device *localproc_device;
+static void lproc_virtio_notify(struct virtqueue *vq)
+{
+	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+}
 
-struct dummy_rproc_resourcetable *lrsc = &dummy_remoteproc_resourcetable;
+irqreturn_t lproc_vq_interrupt(struct lproc *rproc, int notifyid)
+{
+	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+}
+EXPORT_SYMBOL(lproc_vq_interrupt);
+
+static void __lproc_virtio_del_vqs(struct virtio_device *vdev)
+{
+	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+}
+
+static void lproc_virtio_del_vqs(struct virtio_device *vdev)
+{
+	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+}
+
+static u8 lproc_virtio_get_status(struct virtio_device *vdev)
+{
+	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
+	struct lproc *lproc = (struct lproc *)lvdev->rproc;
+	struct fw_rsc_vdev *rsc;
+
+	rsc = (void *)lproc->table_ptr + lvdev->rsc_offset;
+
+	return rsc->status;
+}
+
+static void lproc_virtio_set_status(struct virtio_device *vdev, u8 status)
+{
+	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
+	struct lproc *lproc = (struct lproc *)lvdev->rproc;
+	struct fw_rsc_vdev *rsc;
+
+	rsc = (void *)lproc->table_ptr + lvdev->rsc_offset;
+
+	rsc->status = status;
+	dev_dbg(&vdev->dev, "status: %d\n", status);
+
+}
+
+static void lproc_virtio_reset(struct virtio_device *vdev)
+{
+	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
+	struct lproc *lproc = (struct lproc *)lvdev->rproc;
+	struct fw_rsc_vdev *rsc;
+
+	rsc = (void *)lproc->table_ptr + lvdev->rsc_offset;
+
+	rsc->status = 0;
+	dev_dbg(&vdev->dev, "reset !\n");
+
+}
+
+/* provide the vdev features as retrieved from the firmware */
+static u32 lproc_virtio_get_features(struct virtio_device *vdev)
+{
+	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+}
+
+static void lproc_virtio_finalize_features(struct virtio_device *vdev)
+{
+	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+}
+
+static void lproc_virtio_get(struct virtio_device *vdev, unsigned offset,
+							void *buf, unsigned len)
+{
+	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+}
+
+static void lproc_virtio_set(struct virtio_device *vdev, unsigned offset,
+		      const void *buf, unsigned len)
+{
+	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+}
 
 static int lproc_virtio_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 		       struct virtqueue *vqs[],
@@ -41,13 +122,27 @@ static int lproc_virtio_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 	return ret;
 }
 
+
 static struct virtio_config_ops lproc_virtio_config_ops = {
+	.get_features	= lproc_virtio_get_features,
+	.finalize_features = lproc_virtio_finalize_features,
 	.find_vqs	= lproc_virtio_find_vqs,
+	.del_vqs	= lproc_virtio_del_vqs,
+	.reset		= lproc_virtio_reset,
+	.set_status	= lproc_virtio_set_status,
+	.get_status	= lproc_virtio_get_status,
+	.get		= lproc_virtio_get,
+	.set		= lproc_virtio_set,
 };
 
 static void lproc_vdev_release(struct device *dev)
 {
-	return;
+	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+}
+
+void lproc_remove_virtio_dev(struct rproc_vdev *rvdev)
+{
+	unregister_virtio_device(&rvdev->vdev);
 }
 
 int lproc_add_virtio_dev(struct lproc *lproc, struct rproc_vdev *lvdev, int id)
@@ -56,8 +151,8 @@ int lproc_add_virtio_dev(struct lproc *lproc, struct rproc_vdev *lvdev, int id)
 	struct virtio_device *vdev = &lvdev->vdev;
 	int ret;
 
-	vdev->id.device	= id,
-	vdev->config = &lproc_virtio_config_ops,
+	vdev->id.device	= id;
+	vdev->config = &lproc_virtio_config_ops;
 	vdev->dev.parent = dev;
 	vdev->dev.release = lproc_vdev_release;
 
@@ -142,6 +237,7 @@ static int lproc_handle_vdev(struct lproc *lproc, struct fw_rsc_vdev *rsc,
 
 	/* remember the resource offset*/
 	lvdev->rsc_offset = offset;
+	lvdev->rproc = (struct rproc *)lproc; // TODO: Ajo Remove the Hack
 
 	list_add_tail(&lvdev->node, &lproc->lvdevs);
 
@@ -197,8 +293,6 @@ static int lproc_handle_resources(struct lproc *lproc, int len,
 			return -EINVAL;
 		}
 
-		printk(KERN_INFO "lproc: rsc type %d\n", hdr->type);
-
 		if (hdr->type >= RSC_LAST) {
 			printk(KERN_INFO "lproc: unsupported resource %d\n", hdr->type);
 			continue;
@@ -228,8 +322,6 @@ static void lproc_config_virtio(struct lproc *lproc)
 	/* resource table */
 	lproc->table_ptr = lrsc;
 
-	printk(KERN_INFO "lproc: table=%p tablesz=%d",lrsc,tablesz);
-
 	/* count the number of notify-ids */
 	lproc->max_notifyid = -1;
 	ret = lproc_handle_resources(lproc, tablesz, lproc_count_vrings_handler);
@@ -254,16 +346,17 @@ static int localproc_probe(struct platform_device *pdev)
 
 	INIT_LIST_HEAD(&lproc->lvdevs);
 
-	lproc->dev = pdev;
+	lproc->dev = &pdev->dev;
 	lproc_config_virtio(lproc);
 
-	platform_set_drvdata(pdev, lproc);
 	return 0;
 }
 
 static int localproc_remove(struct platform_device *pdev)
 {
 	struct lproc *lproc = platform_get_drvdata(pdev);
+
+	printk(KERN_INFO "lproc: %s\n", __func__);
 	kfree(lproc);
 	// make sure all other kmallocs are freed..Ajo
 	platform_set_drvdata(pdev, NULL);
@@ -280,20 +373,17 @@ static struct platform_driver localproc_driver = {
 	},
 };
 
-int localproc_init(void)
+static int __init localproc_init(void)
 {
 	int ret = 0;
+
+	printk(KERN_INFO "lproc: %s\n", __func__);
 	/*
 	 * Only support one dummy device for testing
 	 */
 	if (unlikely(localproc_device))
 		return -EEXIST;
 
-	/*
-	 * For time being, just check for uninitialized ring buffers to avoid
-	 * going further on host. Need a better way to identify the same.
-	 * TODO: cleanup this hack - Ajo
-	 */
 	if(is_bsp) {
 		printk(KERN_INFO "lproc: don't run on BSP. Exiting\n");
 		return ret;
@@ -312,7 +402,7 @@ int localproc_init(void)
 
 	return ret;
 }
-EXPORT_SYMBOL(localproc_init);
+late_initcall(localproc_init);
 
 static void __exit localproc_exit(void)
 {

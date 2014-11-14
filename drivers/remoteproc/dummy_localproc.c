@@ -34,8 +34,6 @@
 
 #include "dummy_proc.h"
 
-extern int localproc_init(void);
-
 struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable
 	__attribute__((section(".resource_table"), aligned(PAGE_SIZE))) =
 {
