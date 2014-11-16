@@ -965,8 +965,10 @@ static int rpmsg_probe(struct virtio_device *vdev)
 
 	/* We expect two virtqueues, rx and tx (and in this order) */
 	err = vdev->config->find_vqs(vdev, 2, vqs, vq_cbs, names);
-	if (err)
+	if (err){
+		dev_err(&vdev->dev, "failed vqs creation %x\n",err);
 		goto free_vrp;
+	}
 
 	vrp->rvq = vqs[0];
 	vrp->svq = vqs[1];
@@ -984,10 +986,11 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	total_buf_space = vrp->num_bufs * RPMSG_BUF_SIZE;
 
 	/* allocate coherent memory for the buffers */
-	bufs_va = dma_alloc_coherent(vdev->dev.parent->parent,
-				     total_buf_space, &vrp->bufs_dma,
-				     GFP_KERNEL);
+	bufs_va = dma_alloc_coherent(vdev->dev.parent,
+				RPMSG_TOTAL_BUF_SPACE,
+				&vrp->bufs_dma, GFP_KERNEL);
 	if (!bufs_va) {
+		dev_err(&vdev->dev, "failed bufs_va %p\n",bufs_va);
 		err = -ENOMEM;
 		goto vqs_del;
 	}
@@ -1014,7 +1017,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	}
 
 	/* suppress "tx-complete" interrupts */
-	virtqueue_disable_cb(vrp->svq);
+	//virtqueue_disable_cb(vrp->svq);
 
 	vdev->priv = vrp;
 
@@ -1031,7 +1034,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	}
 
 	/* tell the remote processor it can start sending messages */
-	virtqueue_kick(vrp->rvq);
+	//virtqueue_kick(vrp->rvq);
 
 	dev_info(&vdev->dev, "rpmsg host is online\n");
 

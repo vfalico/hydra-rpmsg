@@ -2,11 +2,13 @@
 #include <linux/module.h>
 #include <linux/remoteproc.h>
 #include <linux/platform_device.h>
+#include <linux/dma-mapping.h>
 #include <linux/slab.h>
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
 #include <linux/virtio_ids.h>
 #include <linux/virtio_ring.h>
+#include <asm/cacheflush.h>
 #include "dummy_proc.h"
 
 extern struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable;
@@ -85,19 +87,34 @@ static void lproc_virtio_reset(struct virtio_device *vdev)
 /* provide the vdev features as retrieved from the firmware */
 static u32 lproc_virtio_get_features(struct virtio_device *vdev)
 {
-	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
-	return 0;
+	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
+	struct lproc *lproc = (struct lproc *)lvdev->rproc;
+	struct fw_rsc_vdev *rsc;
+
+	rsc = (void *)lproc->table_ptr + lvdev->rsc_offset;
+
+	printk(KERN_INFO "lproc:  %s: %x\n", __func__,rsc->gfeatures);
+	return rsc->gfeatures;
 }
 
 static void lproc_virtio_finalize_features(struct virtio_device *vdev)
 {
-	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
+	struct lproc *lproc = (struct lproc *)lvdev->rproc;
+	struct fw_rsc_vdev *rsc;
+
+	rsc = (void *)lproc->table_ptr + lvdev->rsc_offset;
+
+	vring_transport_features(vdev);
+
+	printk(KERN_INFO "lproc:  %s:gfeatures %d vdev->features %d\n",
+			__func__,rsc->gfeatures,vdev->features);
 }
 
 static void lproc_virtio_get(struct virtio_device *vdev, unsigned offset,
 							void *buf, unsigned len)
 {
-	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+	printk(KERN_INFO "lproc:  %s:\n", __func__);
 }
 
 static void lproc_virtio_set(struct virtio_device *vdev, unsigned offset,
@@ -123,17 +140,20 @@ int lproc_map_vring(struct rproc_vdev *lvdev, int i)
 	/* actual size of vring (in bytes) */
 	size = PAGE_ALIGN(vring_size(lvring->len, lvring->align));
 
-	va = ioremap_cache(dma,size);
+	//va = ioremap_cache(dma,size);
+	va = phys_to_virt(dma);
 	if (!va) {
 		printk(KERN_INFO "dma=%p,va=%p,size=%d\n",dma,va,size);
 		dev_err(dev->parent, "ioremap failed\n");
 		return -EINVAL;
 	}
 
-	dev_dbg(dev, "vring%d: va %p dma %llx size %x idr %d\n", i, va,
+	dev_info(dev, "vring%d: va %p dma %llx size %x idr %d\n", i, va,
 				(unsigned long long)dma, size, notifyid);
 
 	lvring->va = va;
+	lvring->dma = dma;
+	lvring->notifyid = notifyid;
 	return 0;
 }
 
@@ -163,7 +183,7 @@ static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
 	addr = lvring->va;
 	len = lvring->len;
 
-	dev_dbg(dev, "vring%d: va %p qsz %d notifyid %d\n",
+	dev_info(dev, "vring%d: va %p qsz %d notifyid %d\n",
 					id, addr, len, lvring->notifyid);
 
 	/*
@@ -181,6 +201,7 @@ static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
 	lvring->vq = vq;
 	vq->priv = lvring;
 
+	dev_info(dev, "lproc: vring%d va %p vq %p notifyid %d\n",id,addr,vq,lvring->notifyid);
 	return vq;
 }
 
@@ -189,7 +210,7 @@ static int lproc_virtio_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 		       vq_callback_t *callbacks[],
 		       const char *names[])
 {
-	int i, ret;
+	int i, ret=0;
 	for (i = 0; i < nvqs; i++) {
 		vqs[i] = rp_find_vq(vdev, i, callbacks[i], names[i]);
 		if (IS_ERR(vqs[i])) {
@@ -293,8 +314,8 @@ static int lproc_handle_vdev(struct lproc *lproc, struct fw_rsc_vdev *rsc,
 		return -EINVAL;
 	}
 
-	printk(KERN_INFO "lproc: vdev rsc: id %d, dfeatures %x, cfg len %d, %d vrings\n",
-		rsc->id, rsc->dfeatures, rsc->config_len, rsc->num_of_vrings);
+	printk(KERN_INFO "lproc: vdev rsc: id %d, gfeatures %x, cfg len %d, %d vrings\n",
+		rsc->id, rsc->gfeatures, rsc->config_len, rsc->num_of_vrings);
 
 	/* we currently support only two vrings per lvdev */
 	if (rsc->num_of_vrings > ARRAY_SIZE(lvdev->vring)) {
@@ -421,6 +442,10 @@ static int localproc_probe(struct platform_device *pdev)
 		printk(KERN_INFO "lproc: %s: kzalloc failed\n", __func__);
 		return -ENOMEM;
 	}
+
+	pdev->dev.coherent_dma_mask = DMA_BIT_MASK(64);
+	pdev->dev.dma_mask = &pdev->dev.coherent_dma_mask;
+
 
 	INIT_LIST_HEAD(&lproc->lvdevs);
 

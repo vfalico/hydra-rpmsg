@@ -28,6 +28,7 @@
 #include <linux/slab.h>
 
 #include "remoteproc_internal.h"
+#define DEBUG	1
 
 /* kick the remote processor, and let it know which virtqueue to poke at */
 static bool rproc_virtio_notify(struct virtqueue *vq)
@@ -100,7 +101,7 @@ static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
 	size = vring_size(len, rvring->align);
 	memset(addr, 0, size);
 
-	dev_dbg(dev, "vring%d: va %p qsz %d notifyid %d\n",
+	dev_info(dev, "vring%d: va %p qsz %d notifyid %d\n",
 					id, addr, len, rvring->notifyid);
 
 	/*
