@@ -13,6 +13,7 @@
 
 extern struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable;
 extern bool is_bsp;
+extern int dummy_lproc_set_ap_callback(void (*fn)(void *), void *data);
 
 static struct platform_device *localproc_device;
 struct dummy_rproc_resourcetable *lrsc = &dummy_remoteproc_resourcetable;
@@ -24,18 +25,13 @@ struct lproc {
 	struct resource_table *table_ptr;
 	struct resource_table *cached_table;
 	u32 table_csum;
+	u64 intr_count;
 };
 
 static void lproc_virtio_notify(struct virtqueue *vq)
 {
 	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
 }
-
-irqreturn_t lproc_vq_interrupt(struct lproc *rproc, int notifyid)
-{
-	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
-}
-EXPORT_SYMBOL(lproc_vq_interrupt);
 
 static void __lproc_virtio_del_vqs(struct virtio_device *vdev)
 {
@@ -107,7 +103,7 @@ static void lproc_virtio_finalize_features(struct virtio_device *vdev)
 
 	vring_transport_features(vdev);
 
-	printk(KERN_INFO "lproc:  %s:gfeatures %d vdev->features %d\n",
+	printk(KERN_INFO "lproc:  %s:gfeatures %d vdev->features %x\n",
 			__func__,rsc->gfeatures,vdev->features);
 }
 
@@ -433,6 +429,38 @@ static void lproc_config_virtio(struct lproc *lproc)
 	ret = lproc_handle_resources(lproc, tablesz, lproc_vdev_handler);
 }
 
+irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
+{
+	struct rproc_vring *rvring;
+
+	dev_dbg(&lproc->dev, "vq index %d is interrupted\n", notifyid);
+#if 0
+	rvring = idr_find(&lproc->notifyids, notifyid);
+	if (!rvring || !rvring->vq)
+		return IRQ_NONE;
+
+	return vring_interrupt(1, rvring->vq);
+#endif
+	return IRQ_NONE;	// Hack make it work and change return val.
+}
+EXPORT_SYMBOL(lproc_vq_interrupt);
+
+void dummy_lproc_isr(void *data)
+{
+	struct lproc *lproc = data;
+	int i;
+
+	printk(KERN_INFO "In %s %d\n",__func__,++(lproc->intr_count));
+	/*
+	 * TODO:Notifyid should sould be derived runtime and don't iterate..
+	 */
+	for (i=0; i<lproc->max_notifyid; i++) {
+		if(lproc_vq_interrupt(lproc,i) == IRQ_NONE) {
+			printk(KERN_INFO "%s No msg found in vq %d\n",__func__,i);
+		}
+	}
+}
+
 static int localproc_probe(struct platform_device *pdev)
 {
 	struct lproc *lproc;
@@ -451,7 +479,9 @@ static int localproc_probe(struct platform_device *pdev)
 
 	lproc->dev = &pdev->dev;
 	lproc_config_virtio(lproc);
-
+	if(dummy_lproc_set_ap_callback(dummy_lproc_isr,(void *)lproc)) {
+		printk(KERN_ERR "lproc: %s: registering callback for rproc interrupts failed\n",__func__);
+	}
 	return 0;
 }
 

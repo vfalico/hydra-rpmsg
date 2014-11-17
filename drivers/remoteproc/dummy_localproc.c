@@ -209,28 +209,27 @@ void __visible smp_dummy_lproc_kicked(void)
 
 void (*dummy_lproc_bsp_callback)(void *) = NULL;
 void *dummy_lproc_bsp_data;
-
-int dummy_lproc_set_bsp_callback(void (*fn)(void *), void *data)
+int dummy_rproc_set_bsp_callback(void (*fn)(void *), void *data)
 {
 	if (unlikely(!DUMMY_LPROC_IS_BSP())) {
 		printk(KERN_ERR "%s: tried to register bsp callback on non-bsp.\n", __func__);
 		return -EFAULT;
 	}
 
-	dummy_lproc_bsp_callback = fn;
-	dummy_lproc_bsp_data = data;
+	dummy_rproc_callback= fn;
+	dummy_rproc_data = data;
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(dummy_lproc_set_bsp_callback);
+EXPORT_SYMBOL_GPL(dummy_rproc_set_bsp_callback);
 
 void __visible smp_dummy_rproc_kicked(void)
 {
 	ack_APIC_irq();
 	irq_enter();
 
-	if (likely(dummy_lproc_bsp_callback))
-		dummy_lproc_bsp_callback(dummy_lproc_bsp_data);
+	if (likely(dummy_rproc_callback))
+		dummy_rproc_callback(dummy_rproc_data);
 	else
 		WARN_ONCE(1, "%s: got an IPI on BSP without any callback.\n", __func__);
 

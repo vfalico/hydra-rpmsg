@@ -44,6 +44,8 @@
 
 #include "remoteproc_internal.h"
 
+#define DEBUG		1
+
 typedef int (*rproc_handle_resources_t)(struct rproc *rproc,
 				struct resource_table *table, int len);
 typedef int (*rproc_handle_resource_t)(struct rproc *rproc,

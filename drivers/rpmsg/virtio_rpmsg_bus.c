@@ -33,6 +33,7 @@
 #include <linux/wait.h>
 #include <linux/rpmsg.h>
 #include <linux/mutex.h>
+#include <linux/device.h>
 
 /**
  * struct virtproc_info - virtual remote processor state
@@ -942,15 +943,33 @@ static void rpmsg_ns_cb(struct rpmsg_channel *rpdev, void *data, int len,
 	}
 }
 
+static struct device *rpmsg_get_parent(struct virtio_device *vdev, bool *is_bsp)
+{
+	struct device *parent;
+	const char *dname = dev_name(vdev->dev.parent);
+
+	if(strncmp(dname, "remoteproc", 10) == 0) {
+		*is_bsp = 1;
+		parent = vdev->dev.parent->parent;
+
+	} else {
+		*is_bsp = 0;
+		parent = vdev->dev.parent;
+	}
+	return parent;
+}
+
 static int rpmsg_probe(struct virtio_device *vdev)
 {
 	vq_callback_t *vq_cbs[] = { rpmsg_recv_done, rpmsg_xmit_done };
 	const char *names[] = { "input", "output" };
 	struct virtqueue *vqs[2];
 	struct virtproc_info *vrp;
+	struct device *dev_parent;
 	void *bufs_va;
 	int err = 0, i;
 	size_t total_buf_space;
+	bool is_bsp;
 
 	vrp = kzalloc(sizeof(*vrp), GFP_KERNEL);
 	if (!vrp)
@@ -963,6 +982,8 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	mutex_init(&vrp->tx_lock);
 	init_waitqueue_head(&vrp->sendq);
 
+	dev_parent = rpmsg_get_parent(vdev,&is_bsp);
+
 	/* We expect two virtqueues, rx and tx (and in this order) */
 	err = vdev->config->find_vqs(vdev, 2, vqs, vq_cbs, names);
 	if (err){
@@ -973,20 +994,8 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	vrp->rvq = vqs[0];
 	vrp->svq = vqs[1];
 
-	/* we expect symmetric tx/rx vrings */
-	WARN_ON(virtqueue_get_vring_size(vrp->rvq) !=
-		virtqueue_get_vring_size(vrp->svq));
-
-	/* we need less buffers if vrings are small */
-	if (virtqueue_get_vring_size(vrp->rvq) < MAX_RPMSG_NUM_BUFS / 2)
-		vrp->num_bufs = virtqueue_get_vring_size(vrp->rvq) * 2;
-	else
-		vrp->num_bufs = MAX_RPMSG_NUM_BUFS;
-
-	total_buf_space = vrp->num_bufs * RPMSG_BUF_SIZE;
-
 	/* allocate coherent memory for the buffers */
-	bufs_va = dma_alloc_coherent(vdev->dev.parent,
+	bufs_va = dma_alloc_coherent(dev_parent,
 				RPMSG_TOTAL_BUF_SPACE,
 				&vrp->bufs_dma, GFP_KERNEL);
 	if (!bufs_va) {
@@ -1017,7 +1026,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	}
 
 	/* suppress "tx-complete" interrupts */
-	//virtqueue_disable_cb(vrp->svq);
+	virtqueue_disable_cb(vrp->svq);
 
 	vdev->priv = vrp;
 
@@ -1034,15 +1043,16 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	}
 
 	/* tell the remote processor it can start sending messages */
-	//virtqueue_kick(vrp->rvq);
+	if(is_bsp)
+		virtqueue_kick(vrp->rvq);
 
-	dev_info(&vdev->dev, "rpmsg host is online\n");
+	dev_info(&vdev->dev, "rpmsg %s is online\n",((is_bsp) ? "host":"lproc"));
 
 	return 0;
 
 free_coherent:
-	dma_free_coherent(vdev->dev.parent->parent, total_buf_space,
-			  bufs_va, vrp->bufs_dma);
+	dma_free_coherent(dev_parent, RPMSG_TOTAL_BUF_SPACE,
+					bufs_va, vrp->bufs_dma);
 vqs_del:
 	vdev->config->del_vqs(vrp->vdev);
 free_vrp:
