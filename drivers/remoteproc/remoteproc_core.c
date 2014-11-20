@@ -636,20 +636,6 @@ static int rproc_handle_carveout(struct rproc *rproc,
 
 		dev_dbg(dev, "carveout mapped 0x%lx to 0x%llx\n",
 					rsc->da, (u64)dma);
-	} else if (rsc->pa && rsc->pa == rsc->da) {
-		/**
-		 * This is the case when the firmware doesn't have/want to
-		 * use the iommu and wants to explicitly be in the pa
-		 * provided. All we can do is hope that
-		 * dma_alloc_coherent() allocated enough space in the
-		 * specified address, otherwise - bail out.
-		 */
-		if (dma != rsc->pa) {
-			ret = -ENOMEM;
-			dev_err(&rproc->dev, "firmware specified tu use 1 to 1 translation of da to pa, and use 0x%x pa, however dma_alloc_coherent() allocated address starting at 0x%x pa.\n",
-				rsc->pa, (unsigned int)dma);
-			goto dma_free;
-		}
 	}
 
 	/*
