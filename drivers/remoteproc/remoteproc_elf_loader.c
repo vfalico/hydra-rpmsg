@@ -542,14 +542,10 @@ static int rproc_elf64_sanity_check(struct rproc *rproc,
 		return -EINVAL;
 	}
 
-	mutex_lock(&rproc->lock);
-
 	ops->load = rproc_elf64_load_segments;
 	ops->find_rsc_table = rproc_elf64_find_rsc_table;
 	ops->find_loaded_rsc_table = rproc_elf64_find_loaded_rsc_table;
 	ops->get_boot_addr = rproc_elf64_get_boot_addr;
-
-	mutex_unlock(&rproc->lock);
 
 	return 0;
 }
@@ -576,14 +572,10 @@ static int rproc_elf32_sanity_check(struct rproc *rproc,
 		return -EINVAL;
 	}
 
-	mutex_lock(&rproc->lock);
-
 	ops->load = rproc_elf32_load_segments;
 	ops->find_rsc_table = rproc_elf32_find_rsc_table;
 	ops->find_loaded_rsc_table = rproc_elf32_find_loaded_rsc_table;
 	ops->get_boot_addr = rproc_elf32_get_boot_addr;
-
-	mutex_unlock(&rproc->lock);
 
 	return 0;
 }
