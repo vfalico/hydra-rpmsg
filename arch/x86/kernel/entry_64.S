@@ -976,6 +976,12 @@ apicinterrupt3 REBOOT_VECTOR \
 	reboot_interrupt smp_reboot_interrupt
 #endif
 
+/* need to remove this shit */
+apicinterrupt DUMMY_LPROC_VECTOR \
+	dummy_lproc_kicked smp_dummy_lproc_kicked
+apicinterrupt DUMMY_RPROC_VECTOR \
+	dummy_rproc_kicked smp_dummy_rproc_kicked
+
 #ifdef CONFIG_X86_UV
 apicinterrupt3 UV_BAU_MESSAGE \
 	uv_bau_message_intr1 uv_bau_message_interrupt

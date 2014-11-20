@@ -51,6 +51,10 @@ extern unsigned long initial_gs;
 extern unsigned char real_mode_blob[];
 extern unsigned char real_mode_relocs[];
 
+/* need to adopt to the new real_mode_header */
+extern const unsigned char trampoline_data_bsp[];
+extern const unsigned char trampoline_status_bsp[];
+
 #ifdef CONFIG_X86_32
 extern unsigned char startup_32_smp[];
 extern unsigned char boot_gdt[];

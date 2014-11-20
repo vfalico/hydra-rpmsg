@@ -36,6 +36,10 @@ extern asmlinkage void spurious_interrupt(void);
 extern asmlinkage void thermal_interrupt(void);
 extern asmlinkage void reschedule_interrupt(void);
 
+/* need to remove this shit away */
+extern asmlinkage void dummy_lproc_kicked(void);
+extern asmlinkage void dummy_rproc_kicked(void);
+
 extern asmlinkage void invalidate_interrupt(void);
 extern asmlinkage void invalidate_interrupt0(void);
 extern asmlinkage void invalidate_interrupt1(void);

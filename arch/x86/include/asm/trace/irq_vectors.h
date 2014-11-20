@@ -65,6 +65,10 @@ DEFINE_IRQ_VECTOR_EVENT(error_apic);
  */
 DEFINE_IRQ_VECTOR_EVENT(x86_platform_ipi);
 
+/* dummy_proc shit - need to remove */
+DEFINE_IRQ_VECTOR_EVENT(dummy_lproc_kicked);
+DEFINE_IRQ_VECTOR_EVENT(dummy_rproc_kicked);
+
 /*
  * irq_work - called when entering/exiting a irq work interrupt
  * vector handler

@@ -19,6 +19,9 @@ BUILD_INTERRUPT3(reboot_interrupt, REBOOT_VECTOR, smp_reboot_interrupt)
 #endif
 
 BUILD_INTERRUPT(x86_platform_ipi, X86_PLATFORM_IPI_VECTOR)
+/* need to move this shit away */
+BUILD_INTERRUPT(dummy_lproc_kicked, DUMMY_LPROC_VECTOR);
+BUILD_INTERRUPT(dummy_rproc_kicked, DUMMY_RPROC_VECTOR);
 
 #ifdef CONFIG_HAVE_KVM
 BUILD_INTERRUPT3(kvm_posted_intr_ipi, POSTED_INTR_VECTOR,

@@ -466,13 +466,23 @@ rproc_elf64_find_loaded_rsc_table(struct rproc *rproc,
 				  const struct firmware *fw)
 {
 	Elf64_Ehdr *ehdr = (Elf64_Ehdr *)fw->data;
-	Elf64_Shdr *shdr;
+	Elf64_Shdr *shdr, *text_shdr;
+	u64 da;
 
 	shdr = find_elf64_table(&rproc->dev, ehdr, fw->size);
 	if (!shdr)
 		return NULL;
 
-	return rproc_da_to_va(rproc, shdr->sh_addr, shdr->sh_size);
+	da = shdr->sh_addr;
+
+	/* the sh_addr contains the virtual address, so we must calculate
+	 * the physical one, judging by the offset */
+	if (da > PAGE_OFFSET) {
+		text_shdr = &(((Elf64_Shdr *)(fw->data + ehdr->e_shoff))[1]);
+		da = da - text_shdr->sh_addr + ehdr->e_entry;
+	}
+
+	return rproc_da_to_va(rproc, da, shdr->sh_size);
 }
 
 /**
@@ -491,13 +501,23 @@ rproc_elf32_find_loaded_rsc_table(struct rproc *rproc,
 				  const struct firmware *fw)
 {
 	Elf32_Ehdr *ehdr = (Elf32_Ehdr *)fw->data;
-	Elf32_Shdr *shdr;
+	Elf32_Shdr *shdr, *text_shdr;
+	u32 da;
 
 	shdr = find_elf32_table(&rproc->dev, ehdr, fw->size);
 	if (!shdr)
 		return NULL;
 
-	return rproc_da_to_va(rproc, shdr->sh_addr, shdr->sh_size);
+	da = shdr->sh_addr;
+
+	/* the sh_addr contains the virtual address, so we must calculate
+	 * the physical one, judging by the offset */
+	if (da > PAGE_OFFSET) {
+		text_shdr = &(((Elf64_Shdr *)(fw->data + ehdr->e_shoff))[1]);
+		da = da - text_shdr->sh_addr + ehdr->e_entry;
+	}
+
+	return rproc_da_to_va(rproc, da, shdr->sh_size);
 }
 
 static int rproc_elf64_sanity_check(struct rproc *rproc,
