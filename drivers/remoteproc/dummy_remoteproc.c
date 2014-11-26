@@ -296,7 +296,7 @@ void dummy_rproc_isr(void *data)
 	/*
 	 * TODO:Notifyid should sould be derived runtime and don't iterate..
 	 */
-	for (i=0; i<rproc->max_notifyid; i++) {
+	for (i=0; i <= rproc->max_notifyid; i++) {
 		if(rproc_vq_interrupt(rproc,i) == IRQ_NONE) {
 			printk(KERN_INFO "%s No msg found in vq %d\n",__func__,i);
 		}

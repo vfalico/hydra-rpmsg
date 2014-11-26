@@ -24,6 +24,8 @@
 #include <linux/module.h>
 #include <linux/hrtimer.h>
 #include <linux/kmemleak.h>
+#include <linux/dma-mapping.h>
+#include <linux/uio.h>
 
 #ifdef DEBUG
 /* For development, we want to crash whenever the ring is screwed. */
@@ -98,6 +100,13 @@ struct vring_virtqueue
 };
 
 #define to_vvq(_vq) container_of(_vq, struct vring_virtqueue, vq)
+
+/*
+ * TODO: Move this rpmsg specific virtio hacks out of this library.
+ */
+static u16 last_avail_idx;
+void __debug_virtqueue(struct virtqueue *_vq, char *fmt);
+
 
 static struct vring_desc *alloc_indirect(struct virtqueue *_vq,
 					 unsigned int total_sg, gfp_t gfp)
@@ -468,6 +477,7 @@ static inline bool more_used(const struct vring_virtqueue *vq)
  * Returns NULL if there are no used buffers, or the "data" token
  * handed to virtqueue_add_*().
  */
+
 void *virtqueue_get_buf(struct virtqueue *_vq, unsigned int *len)
 {
 	struct vring_virtqueue *vq = to_vvq(_vq);
@@ -496,10 +506,12 @@ void *virtqueue_get_buf(struct virtqueue *_vq, unsigned int *len)
 	*len = virtio32_to_cpu(_vq->vdev, vq->vring.used->ring[last_used].len);
 
 	if (unlikely(i >= vq->vring.num)) {
+		__debug_virtqueue(_vq,"virtqueue_get_buf:id out of range");
 		BAD_RING(vq, "id %u out of range\n", i);
 		return NULL;
 	}
 	if (unlikely(!vq->data[i])) {
+		__debug_virtqueue(_vq,"virtqueue_get_buf:not head");
 		BAD_RING(vq, "id %u is not a head!\n", i);
 		return NULL;
 	}
@@ -845,4 +857,171 @@ void *virtqueue_get_used(struct virtqueue *_vq)
 }
 EXPORT_SYMBOL_GPL(virtqueue_get_used);
 
+static unsigned __next_desc(struct vring_desc *desc)
+{
+	unsigned int next;
+
+	if (!(desc->flags & VRING_DESC_F_NEXT))
+		return -1U;
+	next = desc->next;
+	//TODO: read barrier
+	return next;
+}
+static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
+{
+	struct iovec *_iov;
+	static bool hack_flag = 0;
+
+	BUG_ON(iov_size == 0);
+
+	_iov = iov;
+
+	printk(KERN_DEBUG "%s: addr %p len %u iov %p iov_size %d\n",
+			__func__, addr, len, iov, iov_size);
+
+	if(unlikely(!addr))
+		return -1U;
+
+	if(unlikely(!hack_flag)) {
+		_iov->iov_base = ioremap_cache(addr, 256 * 512);
+		if(!_iov->iov_base) {
+			printk(KERN_ERR "iormap_cache failed\n");
+			return -1U;
+		}
+		hack_flag = 1;
+	} else {
+		_iov->iov_base = phys_to_virt(addr);
+		if(!_iov->iov_base) {
+			printk(KERN_ERR "phys_to_virt failed\n");
+			return -1U;
+		}
+	}
+	_iov->iov_len  = len;
+	printk(KERN_DEBUG "%s: iov_base 0x%x len %u \n",
+			__func__, _iov->iov_base, _iov->iov_len);
+	return 1;
+}
+
+int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
+		struct iovec iov[], int iov_size)
+{
+	struct vring_virtqueue *vq = to_vvq(_vq);
+	struct vring_desc *desc;
+	u32 iov_count = 0;
+	int head,i,ret;
+	u16 avail_idx;
+
+	avail_idx = vq->vring.avail->idx;
+
+	printk(KERN_DEBUG "%s: vq %s avail_idx %u last_avail_idx %u\n",
+			__func__, _vq->name, avail_idx, last_avail_idx);
+
+	if(vq->vring.avail->idx == last_avail_idx) {
+		//TODO: we may need to wait and re-check
+		printk(KERN_ERR "%s:dummy_rpmsg: no avail buffers\n",__func__);
+		return -1U;
+	}
+
+	head = last_avail_idx % vq->vring.num;
+	BUG_ON(head > vq->vring.num);
+
+	i = head;
+	*in = *out = 0;
+
+	do {
+		iov_count = *in + *out;
+		desc = &vq->vring.desc[i];
+
+		ret = __translate_desc(desc->addr, desc->len, iov + iov_count,
+				iov_size - iov_count);
+		if(unlikely(ret < 0)) {
+			printk(KERN_ERR "Translation failure %d"
+					"desc idx %d\n",ret, i);
+			return ret;
+		}
+
+		if(desc->flags & VRING_DESC_F_WRITE)
+			*in += ret;
+		else {
+			/*
+			 * We are not expecting RPMSG to have buffers with in &
+			 * out in this verion. This should get fixed.
+			 * TODO:
+			 */
+			printk(KERN_ERR "We are not expecting out buffers here\n");
+			*out += ret;
+			dump_stack();
+		}
+	} while((i = __next_desc(desc)) != -1);
+
+	last_avail_idx++;
+
+	printk(KERN_DEBUG "%s: last_avail_idx %u head %u\n",__func__,
+			last_avail_idx, head);
+
+	return head;
+}
+EXPORT_SYMBOL_GPL(virtqueue_get_avail_buf);
+
+int virtqueue_update_used_idx(struct virtqueue *_vq, u16 used_idx, int len)
+{
+	struct vring_virtqueue *vq = to_vvq(_vq);
+	struct vring_used_elem *used;
+
+	used = &vq->vring.used->ring[vq->last_used_idx % vq->vring.num];
+	used->id = used_idx;
+	used->len = len;
+	vq->vring.used->idx = vq->last_used_idx + 1;
+	printk(KERN_DEBUG "%s: %s used_idx %u len %d vq->vring.used->idx %d\n",
+			__func__, _vq->name, used_idx, len, vq->vring.used->idx);
+
+	vq->last_used_idx++;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(virtqueue_update_used_idx);
+
+void __debug_virtqueue(struct virtqueue *_vq, char *fmt)
+{
+	struct vring_virtqueue *vq = to_vvq(_vq);
+	struct vring_desc *desc;
+	int i,head,avail,used;
+
+	avail = vq->vring.avail->idx % vq->vring.num;
+	used = vq->vring.used->idx % vq->vring.num;
+
+	printk(KERN_INFO "%s:vq %p queue name %s\n",fmt, vq, _vq->name);
+	printk(KERN_INFO "used_desc stats:\n");
+	printk(KERN_INFO "\t\tring[%d].id=%u .len=%d vq.lst_usd_idx=%d "
+			"vring.usd.idx=%d\n",
+			used,vq->vring.used->ring[used].id,
+			vq->vring.used->ring[used].len,
+			vq->last_used_idx,vq->vring.used->idx);
+
+	printk(KERN_INFO "avail_desc stats:\n");
+	printk(KERN_INFO "\t\tring[%d]=%d lst_avl_idx=%d vring.avl.idx=%d\n",
+			avail,vq->vring.avail->ring[avail],
+			last_avail_idx,vq->vring.avail->idx);
+
+	printk(KERN_INFO "virtqueue stats:\n");
+	printk(KERN_INFO "\t\tvq.num_free=%u vq.free_head=%u\n",
+			vq->num_free, vq->free_head);
+	printk(KERN_INFO "\t\tvq.num_added=%u vq.last_used_idx=%u\n",
+			vq->num_added,vq->last_used_idx);
+
+	head = last_avail_idx % vq->vring.num;
+	desc = &vq->vring.desc[head];
+
+	printk(KERN_INFO "desc stats:\n");
+	printk(KERN_INFO "\t\thead=%d desc.addr=%p desc.len=%d\n",
+				head, desc->addr, desc->len);
+	if(strncmp(fmt,"debug_queue",11) == 0) {
+		for(i=0; i < vq->vring.num; i++) {
+			desc = &vq->vring.desc[i];
+			printk(KERN_INFO "\t\t[%3d].addr=%p .len=%d\n", i,
+					desc->addr, desc->len);
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(__debug_virtqueue);
 MODULE_LICENSE("GPL");

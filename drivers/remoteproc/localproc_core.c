@@ -24,23 +24,29 @@ struct lproc {
 	struct list_head lvdevs;
 	struct resource_table *table_ptr;
 	struct resource_table *cached_table;
+	void *priv;
 	u32 table_csum;
 	u64 intr_count;
 };
-
+extern void dummy_lproc_kick_bsp(void);
 static void lproc_virtio_notify(struct virtqueue *vq)
 {
-	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+	/*
+	 * TODO: We currently don't have anything implemented to
+	 * kick the right queue on the other end. For time being
+	 * ISR will look for work in both queues.
+	 */
+	dummy_lproc_kick_bsp();
 }
 
 static void __lproc_virtio_del_vqs(struct virtio_device *vdev)
 {
-	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+	printk(KERN_INFO "%s: Not implemented\n", __func__);
 }
 
 static void lproc_virtio_del_vqs(struct virtio_device *vdev)
 {
-	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+	printk(KERN_INFO "%s: Not implemented\n", __func__);
 }
 
 static u8 lproc_virtio_get_status(struct virtio_device *vdev)
@@ -89,7 +95,7 @@ static u32 lproc_virtio_get_features(struct virtio_device *vdev)
 
 	rsc = (void *)lproc->table_ptr + lvdev->rsc_offset;
 
-	printk(KERN_INFO "lproc:  %s: %x\n", __func__,rsc->gfeatures);
+	dev_dbg(&vdev->dev,"%s: gfeatures %x\n", __func__,rsc->gfeatures);
 	return rsc->gfeatures;
 }
 
@@ -103,20 +109,20 @@ static void lproc_virtio_finalize_features(struct virtio_device *vdev)
 
 	vring_transport_features(vdev);
 
-	printk(KERN_INFO "lproc:  %s:gfeatures %d vdev->features %x\n",
-			__func__,rsc->gfeatures,vdev->features);
+	dev_dbg(&vdev->dev,"%s:gfeatures %x dfeatures %x vdev->features %x\n",
+			__func__,rsc->gfeatures,rsc->dfeatures,vdev->features);
 }
 
 static void lproc_virtio_get(struct virtio_device *vdev, unsigned offset,
 							void *buf, unsigned len)
 {
-	printk(KERN_INFO "lproc:  %s:\n", __func__);
+	printk(KERN_INFO "%s: Not implemented yet\n", __func__);
 }
 
 static void lproc_virtio_set(struct virtio_device *vdev, unsigned offset,
 		      const void *buf, unsigned len)
 {
-	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+	printk(KERN_INFO "%s: Not implemented yet\n", __func__);
 }
 
 int lproc_map_vring(struct rproc_vdev *lvdev, int i)
@@ -136,11 +142,9 @@ int lproc_map_vring(struct rproc_vdev *lvdev, int i)
 	/* actual size of vring (in bytes) */
 	size = PAGE_ALIGN(vring_size(lvring->len, lvring->align));
 
-	//va = ioremap_cache(dma,size);
-	va = phys_to_virt(dma);
+	va = ioremap_cache(dma,size);
 	if (!va) {
-		printk(KERN_INFO "dma=%p,va=%p,size=%d\n",dma,va,size);
-		dev_err(dev->parent, "ioremap failed\n");
+		dev_err(dev, "ioremap failed\n");
 		return -EINVAL;
 	}
 
@@ -154,7 +158,7 @@ int lproc_map_vring(struct rproc_vdev *lvdev, int i)
 }
 
 
-static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
+static struct virtqueue *lp_find_vq(struct virtio_device *vdev,
 				    unsigned id,
 				    void (*callback)(struct virtqueue *vq),
 				    const char *name)
@@ -190,7 +194,12 @@ static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
 					lproc_virtio_notify, callback, name);
 	if (!vq) {
 		dev_err(dev, "vring_new_virtqueue %s failed\n", name);
-		//lproc_free_vring(lvring);
+#if 0
+		/*
+		 *TODO: Implement the cleanup features.
+		 */
+		lproc_free_vring(lvring);
+#endif
 		return ERR_PTR(-ENOMEM);
 	}
 
@@ -208,10 +217,10 @@ static int lproc_virtio_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 {
 	int i, ret=0;
 	for (i = 0; i < nvqs; i++) {
-		vqs[i] = rp_find_vq(vdev, i, callbacks[i], names[i]);
+		vqs[i] = lp_find_vq(vdev, i, callbacks[i], names[i]);
 		if (IS_ERR(vqs[i])) {
 			ret = PTR_ERR(vqs[i]);
-			printk(KERN_INFO "lproc: failed find rp_find_vq\n");
+			dev_dbg(&vdev->dev,"lproc: failed find rp_find_vq\n");
 		}
 	}
 	return ret;
@@ -232,7 +241,7 @@ static struct virtio_config_ops lproc_virtio_config_ops = {
 
 static void lproc_vdev_release(struct device *dev)
 {
-	printk(KERN_INFO "lproc:  %s: we're the AP\n", __func__);
+	printk(KERN_INFO "%s: Not implemented yet\n", __func__);
 }
 
 void lproc_remove_virtio_dev(struct rproc_vdev *lvdev)
@@ -310,12 +319,14 @@ static int lproc_handle_vdev(struct lproc *lproc, struct fw_rsc_vdev *rsc,
 		return -EINVAL;
 	}
 
-	printk(KERN_INFO "lproc: vdev rsc: id %d, gfeatures %x, cfg len %d, %d vrings\n",
-		rsc->id, rsc->gfeatures, rsc->config_len, rsc->num_of_vrings);
+	printk(KERN_INFO "lproc: vdev rsc: id %d gfeatures %x dfeatures %x"
+			"cfg len %d %dvrings\n",rsc->id, rsc->gfeatures,
+			rsc->dfeatures, rsc->config_len, rsc->num_of_vrings);
 
 	/* we currently support only two vrings per lvdev */
 	if (rsc->num_of_vrings > ARRAY_SIZE(lvdev->vring)) {
-		printk(KERN_INFO "lproc: too many vrings: %d\n", rsc->num_of_vrings);
+		printk(KERN_INFO "lproc: too many vrings: %d\n",
+				rsc->num_of_vrings);
 		return -EINVAL;
 	}
 
@@ -332,9 +343,10 @@ static int lproc_handle_vdev(struct lproc *lproc, struct fw_rsc_vdev *rsc,
 
 	/* remember the resource offset*/
 	lvdev->rsc_offset = offset;
-	lvdev->rproc = (struct rproc *)lproc; // TODO: Ajo Remove the Hack
+	lvdev->rproc = (struct rproc *)lproc; // TODO: Remove the Hack
 
 	list_add_tail(&lvdev->node, &lproc->lvdevs);
+	lproc->priv = lvdev;
 
 	/* it is now safe to add the virtio device */
 	ret = lproc_add_virtio_dev(lproc, lvdev, rsc->id);
@@ -389,7 +401,8 @@ static int lproc_handle_resources(struct lproc *lproc, int len,
 		}
 
 		if (hdr->type >= RSC_LAST) {
-			printk(KERN_INFO "lproc: unsupported resource %d\n", hdr->type);
+			printk(KERN_INFO "lproc: unsupported resource %d\n",
+					hdr->type);
 			continue;
 		}
 
@@ -412,8 +425,8 @@ static int lproc_handle_resources(struct lproc *lproc, int len,
  */
 static void lproc_config_virtio(struct lproc *lproc)
 {
-	int ret, tablesz = sizeof(struct dummy_rproc_resourcetable); // Ajo: Hack, get it from fw
-
+	// TODO get it from fw table routines
+	int ret, tablesz = sizeof(struct dummy_rproc_resourcetable);
 	/* resource table */
 	lproc->table_ptr = lrsc;
 
@@ -428,20 +441,24 @@ static void lproc_config_virtio(struct lproc *lproc)
 	/* look for virtio devices and register them */
 	ret = lproc_handle_resources(lproc, tablesz, lproc_vdev_handler);
 }
-
+/*
+ * TODO: Fix the following two routines to interrupt only the virtqueue which
+ * has some work to do.
+ */
 irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
 {
-	struct rproc_vring *rvring;
+	struct rproc_vdev *lvdev;
+	struct rproc_vring *lvring;
 
-	dev_dbg(&lproc->dev, "vq index %d is interrupted\n", notifyid);
-#if 0
-	rvring = idr_find(&lproc->notifyids, notifyid);
-	if (!rvring || !rvring->vq)
+	if(lproc && lproc->priv) {
+		lvdev = lproc->priv;
+		lvring = &lvdev->vring[notifyid];
+		return vring_interrupt(1, lvring->vq);
+	} else {
+		printk(KERN_INFO "%s: Failed interrupt! lproc %p priv %p\n",
+				__func__, lproc, lproc->priv);
 		return IRQ_NONE;
-
-	return vring_interrupt(1, rvring->vq);
-#endif
-	return IRQ_NONE;	// Hack make it work and change return val.
+	}
 }
 EXPORT_SYMBOL(lproc_vq_interrupt);
 
@@ -450,13 +467,14 @@ void dummy_lproc_isr(void *data)
 	struct lproc *lproc = data;
 	int i;
 
-	printk(KERN_INFO "In %s %d\n",__func__,++(lproc->intr_count));
-	/*
-	 * TODO:Notifyid should sould be derived runtime and don't iterate..
-	 */
-	for (i=0; i<lproc->max_notifyid; i++) {
+	if (unlikely(!lproc)) {
+		printk(KERN_INFO "In %s %p\n",__func__, lproc);
+		return;
+	}
+
+	for (i=0; i <= lproc->max_notifyid; i++) {
 		if(lproc_vq_interrupt(lproc,i) == IRQ_NONE) {
-			printk(KERN_INFO "%s No msg found in vq %d\n",__func__,i);
+			printk(KERN_INFO "%s No work to do vq %d\n",__func__,i);
 		}
 	}
 }
@@ -467,33 +485,34 @@ static int localproc_probe(struct platform_device *pdev)
 
 	lproc = kzalloc(sizeof(struct lproc), GFP_KERNEL);
 	if (!lproc) {
-		printk(KERN_INFO "lproc: %s: kzalloc failed\n", __func__);
+		dev_dbg(&pdev->dev,"%s: kzalloc failed\n", __func__);
 		return -ENOMEM;
 	}
 
 	pdev->dev.coherent_dma_mask = DMA_BIT_MASK(64);
 	pdev->dev.dma_mask = &pdev->dev.coherent_dma_mask;
 
-
 	INIT_LIST_HEAD(&lproc->lvdevs);
 
 	lproc->dev = &pdev->dev;
 	lproc_config_virtio(lproc);
 	if(dummy_lproc_set_ap_callback(dummy_lproc_isr,(void *)lproc)) {
-		printk(KERN_ERR "lproc: %s: registering callback for rproc interrupts failed\n",__func__);
+		dev_err(&pdev->dev,"%s: registering callback for rproc "
+				"interrupts failed\n",__func__);
 	}
 	return 0;
 }
 
+/*
+ * TODO:make sure all other kmallocs are freed.
+ */
 static int localproc_remove(struct platform_device *pdev)
 {
 	struct lproc *lproc = platform_get_drvdata(pdev);
 
-	printk(KERN_INFO "lproc: %s\n", __func__);
+	dev_dbg(&pdev->dev,"%s\n", __func__);
 	kfree(lproc);
-	// make sure all other kmallocs are freed..Ajo
 	platform_set_drvdata(pdev, NULL);
-
 	return 0;
 }
 
@@ -510,7 +529,6 @@ static int __init localproc_init(void)
 {
 	int ret = 0;
 
-	printk(KERN_INFO "lproc: %s\n", __func__);
 	/*
 	 * Only support one dummy device for testing
 	 */

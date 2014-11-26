@@ -63,7 +63,7 @@ struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable
 	.rsc_vdev = {
 		.id =		VIRTIO_ID_RPMSG,	/* found in virtio_ids.h */
 		.notifyid =	0,			/* magic number for IPC */
-		.dfeatures =	0,			/* features - none (??) */
+		.dfeatures =	1,			/* features - VIRTIO_RPMSG_F_NS*/
 		.gfeatures =	0,			/* negotiated features - blank */
 		.config_len =	0,			/* config len - none (??) */
 		.status =	0,			/* status - updated by bsp */
@@ -106,7 +106,6 @@ int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_param
 	memcpy(x86_trampoline_bsp_base, bsp_hacked, size);
 
 	ret = cpu_down(boot_cpu);
-
 	if (ret) {
 		printk(KERN_ERR "%s: couldn't cpu_down() cpu %d (errno %d)\n",
 		       __func__, boot_cpu, ret);

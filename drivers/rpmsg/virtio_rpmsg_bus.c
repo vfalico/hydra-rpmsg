@@ -144,6 +144,11 @@ rpmsg_show_attr(announce, announce ? "true" : "false", "%s\n");
  */
 static unsigned int rpmsg_dev_index;
 
+/*
+ * Who am I ? rpmsg running on rproc/lproc
+ */
+static bool is_bsp;
+
 static ssize_t modalias_show(struct device *dev,
 			     struct device_attribute *attr, char *buf)
 {
@@ -175,7 +180,6 @@ static int rpmsg_dev_match(struct device *dev, struct device_driver *drv)
 	struct rpmsg_driver *rpdrv = to_rpmsg_driver(drv);
 	const struct rpmsg_device_id *ids = rpdrv->id_table;
 	unsigned int i;
-
 	for (i = 0; ids[i].name[0]; i++)
 		if (rpmsg_id_match(rpdev, &ids[i]))
 			return 1;
@@ -225,6 +229,10 @@ static struct rpmsg_endpoint *__rpmsg_create_ept(struct virtproc_info *vrp,
 		dev_err(dev, "failed to kzalloc a new ept\n");
 		return NULL;
 	}
+
+	dev_dbg(dev, "%s:%s vrp %p rpdev %p priv %p addr %lu\n",
+			(is_bsp ? "host" : "lproc"),__func__, vrp, rpdev,
+			priv, addr);
 
 	kref_init(&ept->refcount);
 	mutex_init(&ept->cb_lock);
@@ -569,28 +577,41 @@ static int rpmsg_destroy_channel(struct virtproc_info *vrp,
 	return 0;
 }
 
-/* super simple buffer "allocator" that is just enough for now */
-static void *get_a_tx_buf(struct virtproc_info *vrp)
+extern int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
+		struct iovec iov[], int iov_size);
+extern int virtqueue_update_used_idx(struct virtqueue *_vq, u16 used_idx, int len);
+extern void __debug_virtqueue(struct virtqueue *_vq, char *fmt);
+
+/*
+ * In this version of RPMSG we follow producer/consumer model where the tx
+ * always consume a buffer from the remote processor's rx ring and sends
+ * down its data. So in principle, the rings are inversed between host and
+ * remote processor.
+ *
+ * TODO: A better implementation.
+ *
+ */
+static void *get_a_tx_buf(struct virtproc_info *vrp, u16 *idx)
 {
-	unsigned int len;
-	void *ret;
+	int in, out;
+	struct iovec iov[2]; // Ideally Array size should be UIO_MAXIOV, we are
+			     // not expecting more than 1 vector in this version.
+
+	memset(iov,0,sizeof(iov));
 
 	/* support multiple concurrent senders */
-	mutex_lock(&vrp->tx_lock);
 
-	/*
-	 * either pick the next unused tx buffer
-	 * (half of our buffers are used for sending messages)
-	 */
-	if (vrp->last_sbuf < vrp->num_bufs / 2)
-		ret = vrp->sbufs + RPMSG_BUF_SIZE * vrp->last_sbuf++;
-	/* or recycle a used one */
-	else
-		ret = virtqueue_get_buf(vrp->svq, &len);
+	*idx = virtqueue_get_avail_buf(vrp->svq, &in, &out, iov, ARRAY_SIZE(iov));
+	if(*idx < 0) {
+		printk(KERN_INFO "virtqueue_get_avail_buf failed\n");
+		return NULL;
+	}
 
-	mutex_unlock(&vrp->tx_lock);
+	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d iov %p len %lu\n",
+			__func__,vrp->svq, in, out, iov[0].iov_base,
+			iov[0].iov_len);
 
-	return ret;
+	return iov[0].iov_base;
 }
 
 /**
@@ -648,7 +669,6 @@ static void rpmsg_downref_sleepers(struct virtproc_info *vrp)
 
 	mutex_unlock(&vrp->tx_lock);
 }
-
 /**
  * rpmsg_send_offchannel_raw() - send a message across to the remote processor
  * @rpdev: the rpmsg channel
@@ -690,6 +710,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 	struct device *dev = &rpdev->dev;
 	struct scatterlist sg;
 	struct rpmsg_hdr *msg;
+	u16 idx;
 	int err;
 
 	/* bcasting isn't allowed */
@@ -712,13 +733,25 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 		return -EMSGSIZE;
 	}
 
-	/* grab a buffer */
-	msg = get_a_tx_buf(vrp);
-	if (!msg && !wait)
-		return -ENOMEM;
+	/*
+	 * TODO: This implementation of RPMSG has a two step transmit. So
+	 * taking tx_lock outside get_a_tx_buf and releasing it after
+	 * virtqueue_update_used_idx. Again, we shouldn't sleep for tx buffers
+	 * in this version, but incase, it is not good to sleep holding lock.
+	 */
 
+	mutex_lock(&vrp->tx_lock);
+
+	/* grab a buffer */
+	msg = get_a_tx_buf(vrp, &idx);
+
+	if (!msg && !wait){
+		dev_err(dev, "no tx buffers\n");
+		err = -ENOMEM;
+		goto out;
+	}
 	/* no free buffer ? wait for one (but bail after 15 seconds) */
-	while (!msg) {
+	while (!msg){
 		/* enable "tx-complete" interrupts, if not already enabled */
 		rpmsg_upref_sleepers(vrp);
 
@@ -729,7 +762,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 		 * if later this happens to be required, it'd be easy to add.
 		 */
 		err = wait_event_interruptible_timeout(vrp->sendq,
-					(msg = get_a_tx_buf(vrp)),
+					(msg = get_a_tx_buf(vrp, &idx)),
 					msecs_to_jiffies(15000));
 
 		/* disable "tx-complete" interrupts if we're the last sleeper */
@@ -738,7 +771,8 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 		/* timeout ? */
 		if (!err) {
 			dev_err(dev, "timeout waiting for a tx buffer\n");
-			return -ERESTARTSYS;
+			err = -ERESTARTSYS;
+			goto out;
 		}
 	}
 
@@ -754,11 +788,10 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 					msg->flags, msg->reserved);
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio TX: ", DUMP_PREFIX_NONE, 16, 1,
 					msg, sizeof(*msg) + msg->len, true);
-
 	sg_init_one(&sg, msg, sizeof(*msg) + len);
 
-	mutex_lock(&vrp->tx_lock);
-
+	err = virtqueue_update_used_idx(vrp->svq, idx, len + (sizeof(*msg)));
+#if 0
 	/* add message to the remote processor's virtqueue */
 	err = virtqueue_add_outbuf(vrp->svq, &sg, 1, msg, GFP_KERNEL);
 	if (err) {
@@ -773,6 +806,12 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 
 	/* tell the remote processor it has a pending message to read */
 	virtqueue_kick(vrp->svq);
+#endif
+	mutex_unlock(&vrp->tx_lock);
+
+	/* tell the remote processor it has a pending message to read */
+	virtqueue_kick(vrp->svq);
+	err = 0;
 out:
 	mutex_unlock(&vrp->tx_lock);
 	return err;
@@ -786,7 +825,7 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 	struct scatterlist sg;
 	int err;
 
-	dev_dbg(dev, "From: 0x%lx, To: 0x%lx, Len: %d, Flags: %d, Reserved: %d\n",
+	dev_info(dev, "From: 0x%lx, To: 0x%lx, Len: %d, Flags: %d, Reserved: %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio RX: ", DUMP_PREFIX_NONE, 16, 1,
@@ -837,7 +876,6 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 		dev_err(dev, "failed to add a virtqueue buffer: %d\n", err);
 		return err;
 	}
-
 	return 0;
 }
 
@@ -884,7 +922,7 @@ static void rpmsg_xmit_done(struct virtqueue *svq)
 {
 	struct virtproc_info *vrp = svq->vdev->priv;
 
-	dev_dbg(&svq->vdev->dev, "%s\n", __func__);
+	dev_info(&svq->vdev->dev, "%s\n", __func__);
 
 	/* wake up potential senders that are waiting for a tx buffer */
 	wake_up_interruptible(&vrp->sendq);
@@ -943,7 +981,8 @@ static void rpmsg_ns_cb(struct rpmsg_channel *rpdev, void *data, int len,
 	}
 }
 
-static struct device *rpmsg_get_parent(struct virtio_device *vdev, bool *is_bsp)
+static struct device *rpmsg_setup_ring_attr(struct virtio_device *vdev,
+		bool *is_bsp, vq_callback_t *vq_cbs[], const char *names[])
 {
 	struct device *parent;
 	const char *dname = dev_name(vdev->dev.parent);
@@ -951,22 +990,79 @@ static struct device *rpmsg_get_parent(struct virtio_device *vdev, bool *is_bsp)
 	if(strncmp(dname, "remoteproc", 10) == 0) {
 		*is_bsp = 1;
 		parent = vdev->dev.parent->parent;
-
+		vq_cbs[0] = rpmsg_recv_done;
+		vq_cbs[1] = rpmsg_xmit_done;
+		names[0] = "recv";
+		names[1] = "send";
 	} else {
 		*is_bsp = 0;
 		parent = vdev->dev.parent;
+		vq_cbs[0] = rpmsg_xmit_done;
+		vq_cbs[1] = rpmsg_recv_done;
+		names[0] = "send";
+		names[1] = "recv";
 	}
 	return parent;
 }
 
+#define MSG_SIZE	100
+static void dummy_rpmsg_cb(struct rpmsg_channel *rpdev, void *data, int len,
+						void *priv, unsigned long src)
+{
+	static unsigned int reply_cnt;
+	char buf[MSG_SIZE];
+	int ret;
+
+	len = snprintf(buf, MSG_SIZE, "Reply from lproc %u",++reply_cnt);
+	ret = rpmsg_sendto(rpdev, buf, len + 1, src);
+	if(ret)
+		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
+}
+
+static void create_dummy_rpmsg_ept(struct virtproc_info *vrp)
+{
+	struct rpmsg_ns_msg msg;
+	struct rpmsg_channel *rpdev;
+	struct rpmsg_channel_info chinfo;
+	struct device *dev = &vrp->vdev->dev;
+	struct rpmsg_endpoint *ept = NULL;
+	int ret = 0;
+
+	memset(&msg,0,sizeof(msg));
+
+	dev_dbg(dev,"%s: vrp %p\n",__func__,vrp);
+
+	strncpy(msg.name,"lproc",sizeof(msg.name));
+
+	msg.addr = 1048;	//hack till we use idr to get one.
+	msg.flags|= RPMSG_NS_CREATE;
+
+	strncpy(chinfo.name, msg.name, sizeof(chinfo.name));
+	chinfo.src = msg.addr;
+	chinfo.dst = RPMSG_ADDR_ANY;
+
+	rpdev = rpmsg_create_channel(vrp, &chinfo);
+	if (!rpdev)
+		dev_err(dev, "rpmsg_create_channel failed\n");
+
+	ept = rpmsg_create_ept(rpdev, dummy_rpmsg_cb, NULL, rpdev->src);
+	if (!ept) {
+		dev_err(dev, "failed to create the ns ept\n");
+	}
+	ret = rpmsg_sendto(rpdev, &msg, sizeof(msg), RPMSG_NS_ADDR);
+	if (ret)
+		dev_err(dev, "failed to announce service %d\n", ret);
+
+}
+
 static int rpmsg_probe(struct virtio_device *vdev)
 {
-	vq_callback_t *vq_cbs[] = { rpmsg_recv_done, rpmsg_xmit_done };
-	const char *names[] = { "input", "output" };
+	vq_callback_t *vq_cbs[2];
+	const char *names[2];
 	struct virtqueue *vqs[2];
 	struct virtproc_info *vrp;
 	struct device *dev_parent;
-	void *bufs_va;
+	void *bufs_va = NULL;
 	int err = 0, i;
 	size_t total_buf_space;
 	bool is_bsp;
@@ -982,7 +1078,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	mutex_init(&vrp->tx_lock);
 	init_waitqueue_head(&vrp->sendq);
 
-	dev_parent = rpmsg_get_parent(vdev,&is_bsp);
+	dev_parent = rpmsg_setup_ring_attr(vdev, &is_bsp, vq_cbs, names);
 
 	/* We expect two virtqueues, rx and tx (and in this order) */
 	err = vdev->config->find_vqs(vdev, 2, vqs, vq_cbs, names);
@@ -991,8 +1087,8 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		goto free_vrp;
 	}
 
-	vrp->rvq = vqs[0];
-	vrp->svq = vqs[1];
+	vrp->rvq = vqs[(is_bsp?0:1)];
+	vrp->svq = vqs[(is_bsp?1:0)];
 
 	/* allocate coherent memory for the buffers */
 	bufs_va = dma_alloc_coherent(dev_parent,
@@ -1007,14 +1103,11 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	dev_dbg(&vdev->dev, "buffers: va %p, dma 0x%llx\n", bufs_va,
 					(unsigned long long)vrp->bufs_dma);
 
-	/* half of the buffers is dedicated for RX */
+	/* All the buffers is dedicated for RX */
 	vrp->rbufs = bufs_va;
 
-	/* and half is dedicated for TX */
-	vrp->sbufs = bufs_va + total_buf_space / 2;
-
 	/* set up the receive buffers */
-	for (i = 0; i < vrp->num_bufs / 2; i++) {
+	for (i = 0; i < RPMSG_NUM_BUFS ; i++) {
 		struct scatterlist sg;
 		void *cpu_addr = vrp->rbufs + i * RPMSG_BUF_SIZE;
 
@@ -1023,8 +1116,8 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, cpu_addr,
 								GFP_KERNEL);
 		WARN_ON(err); /* sanity check; this can't really happen */
-	}
 
+	}
 	/* suppress "tx-complete" interrupts */
 	virtqueue_disable_cb(vrp->svq);
 
@@ -1043,11 +1136,15 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	}
 
 	/* tell the remote processor it can start sending messages */
-	if(is_bsp)
-		virtqueue_kick(vrp->rvq);
+	virtqueue_kick(vrp->rvq);
+
+	__debug_virtqueue(vrp->rvq,"initial replenish & kick");
 
 	dev_info(&vdev->dev, "rpmsg %s is online\n",((is_bsp) ? "host":"lproc"));
 
+	/* Send the initial name service message from remote processor */
+	if(!is_bsp)
+		create_dummy_rpmsg_ept(vrp);
 	return 0;
 
 free_coherent:
