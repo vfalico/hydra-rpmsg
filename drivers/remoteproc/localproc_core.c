@@ -525,7 +525,7 @@ static struct platform_driver localproc_driver = {
 	},
 };
 
-static int __init localproc_init(void)
+int __init localproc_init(void)
 {
 	int ret = 0;
 
@@ -553,6 +553,7 @@ static int __init localproc_init(void)
 
 	return ret;
 }
+EXPORT_SYMBOL(localproc_init);
 late_initcall(localproc_init);
 
 static void __exit localproc_exit(void)

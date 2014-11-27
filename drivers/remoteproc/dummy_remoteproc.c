@@ -33,9 +33,10 @@
 #include <linux/completion.h>
 
 #include "dummy_proc.h"
+#include "remoteproc_internal.h"
 
 extern struct boot_params boot_params;
-extern int dummy_rproc_set_bsp_callback(void (*fn)(void *), void *data);
+extern int dummy_lproc_set_bsp_callback(void (*fn)(void *), void *data);
 
 char *cmdline_override = "";
 module_param(cmdline_override, charp, S_IRUGO | S_IWUSR);
@@ -116,10 +117,19 @@ static void dummy_rproc_boot_callback(void *data)
 	complete(&dummy_rproc_boot_completion);
 }
 
-static void dummy_rproc_kick_callback(void *data)
+static void dummy_rproc_callback(void *data)
 {
-	struct rproc *rproc = (struct rproc *)data;
-	dev_info(&rproc->dev, "got a kick from AP.\n");
+	struct rproc *rproc= data;
+	int i;
+
+	/*
+	 * TODO:Notifyid should be derived runtime and don't iterate..
+	 */
+	for (i=0; i <= rproc->max_notifyid; i++) {
+		if(rproc_vq_interrupt(rproc, i) == IRQ_NONE) {
+			printk(KERN_INFO "%s No msg found in vq %d\n",__func__,i);
+		}
+	}
 }
 
 static int dummy_rproc_start(struct rproc *rproc)
@@ -147,6 +157,12 @@ static int dummy_rproc_start(struct rproc *rproc)
 		goto free_bp;
 	}
 
+	//
+	sprintf(cmdline_override, "console=ttyS1,115200n8 earlyprintk=ttyS1,115200n8 memblock=debug acpi_irq_nobalance lapic_timer=1000000 mklinux debug memmap=640K@0 cma=16M@0xec00000 present_mask=%d memmap=0x2e90000$640K memmap=0xB0340000$0x4e800000 memmap=4G$0xfebf0000 memmap=500M@0x2f400000 memmap=50M$0x10000000 apic=debug lpj=333254",
+			1 << (boot_cpu - 1));
+	dummy_handle_pci_handover(rproc, cmdline_override);
+
+	//
 	if (!*cmdline_override) {
 		cmdline_build_str = kmalloc(COMMAND_LINE_SIZE, GFP_KERNEL);
 
@@ -246,7 +262,7 @@ static int dummy_rproc_start(struct rproc *rproc)
 		goto free_str;
 	}
 
-	ret = dummy_lproc_set_bsp_callback(dummy_rproc_kick_callback, rproc);
+	ret = dummy_lproc_set_bsp_callback(dummy_rproc_callback, rproc);
 
 	if (ret)
 		dev_err(&rproc->dev, "failed to set the normal BSP IPI callback, we will miss them!\n");
@@ -287,20 +303,6 @@ static struct rproc_ops dummy_rproc_ops = {
 	.kick		= dummy_rproc_kick,
 };
 
-void dummy_rproc_isr(void *data)
-{
-	struct rproc *rproc= data;
-	int i;
-
-	/*
-	 * TODO:Notifyid should be derived runtime and don't iterate..
-	 */
-	for (i=0; i <= rproc->max_notifyid; i++) {
-		if(rproc_vq_interrupt(rproc,i) == IRQ_NONE) {
-			printk(KERN_INFO "%s No msg found in vq %d\n",__func__,i);
-		}
-	}
-}
 static int dummy_rproc_probe(struct platform_device *pdev)
 {
 	struct rproc *rproc;
@@ -319,9 +321,6 @@ static int dummy_rproc_probe(struct platform_device *pdev)
 	if (unlikely(ret))
 		goto err;
 
-	if(dummy_rproc_set_bsp_callback(dummy_rproc_isr,(void *)rproc)) {
-		printk(KERN_ERR "%s: registering callback for lproc interrupts failed\n",__func__);
-	}
 	return 0;
 
 err:
