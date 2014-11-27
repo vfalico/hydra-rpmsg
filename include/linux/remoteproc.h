@@ -453,7 +453,6 @@ struct rproc {
 	struct resource_table *table_ptr;
 	struct resource_table *cached_table;
 	u32 table_csum;
-	u64 intr_count;
 };
 
 /* we currently support only two vrings per rvdev */

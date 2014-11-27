@@ -783,11 +783,13 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 	msg->reserved = 0;
 	memcpy(msg->data, data, len);
 
-	dev_dbg(dev, "TX From 0x%lx, To 0x%lx, Len %d, Flags %d, Reserved %d\n",
+	dev_info(dev, "TX From 0x%lx, To 0x%lx, Len %d, Flags %d, Reserved %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
+#if 0
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio TX: ", DUMP_PREFIX_NONE, 16, 1,
 					msg, sizeof(*msg) + msg->len, true);
+#endif
 	sg_init_one(&sg, msg, sizeof(*msg) + len);
 
 	err = virtqueue_update_used_idx(vrp->svq, idx, len + (sizeof(*msg)));
@@ -828,9 +830,10 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 	dev_info(dev, "From: 0x%lx, To: 0x%lx, Len: %d, Flags: %d, Reserved: %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
+#if 0
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio RX: ", DUMP_PREFIX_NONE, 16, 1,
 					msg, sizeof(*msg) + msg->len, true);
-
+#endif
 	/*
 	 * We currently use fixed-sized buffers, so trivially sanitize
 	 * the reported payload length.

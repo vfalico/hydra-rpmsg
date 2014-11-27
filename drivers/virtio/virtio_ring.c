@@ -875,15 +875,15 @@ static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
 	BUG_ON(iov_size == 0);
 
 	_iov = iov;
-
+#if 0
 	printk(KERN_DEBUG "%s: addr %p len %u iov %p iov_size %d\n",
 			__func__, addr, len, iov, iov_size);
-
+#endif
 	if(unlikely(!addr))
 		return -1U;
 
 	if(unlikely(!hack_flag)) {
-		_iov->iov_base = ioremap_cache(addr, 256 * 512);
+		_iov->iov_base = ioremap_cache(addr, 512 * 512);
 		if(!_iov->iov_base) {
 			printk(KERN_ERR "iormap_cache failed\n");
 			return -1U;
@@ -897,8 +897,10 @@ static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
 		}
 	}
 	_iov->iov_len  = len;
+#if 0
 	printk(KERN_DEBUG "%s: iov_base 0x%x len %u \n",
 			__func__, _iov->iov_base, _iov->iov_len);
+#endif
 	return 1;
 }
 
@@ -912,10 +914,10 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
 	u16 avail_idx;
 
 	avail_idx = vq->vring.avail->idx;
-
+#if 0
 	printk(KERN_DEBUG "%s: vq %s avail_idx %u last_avail_idx %u\n",
 			__func__, _vq->name, avail_idx, last_avail_idx);
-
+#endif
 	if(vq->vring.avail->idx == last_avail_idx) {
 		//TODO: we may need to wait and re-check
 		printk(KERN_ERR "%s:dummy_rpmsg: no avail buffers\n",__func__);
@@ -945,7 +947,7 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
 		else {
 			/*
 			 * We are not expecting RPMSG to have buffers with in &
-			 * out in this verion. This should get fixed.
+			 * out in this version. This will change.
 			 * TODO:
 			 */
 			printk(KERN_ERR "We are not expecting out buffers here\n");
@@ -955,10 +957,6 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
 	} while((i = __next_desc(desc)) != -1);
 
 	last_avail_idx++;
-
-	printk(KERN_DEBUG "%s: last_avail_idx %u head %u\n",__func__,
-			last_avail_idx, head);
-
 	return head;
 }
 EXPORT_SYMBOL_GPL(virtqueue_get_avail_buf);
@@ -972,9 +970,10 @@ int virtqueue_update_used_idx(struct virtqueue *_vq, u16 used_idx, int len)
 	used->id = used_idx;
 	used->len = len;
 	vq->vring.used->idx = vq->last_used_idx + 1;
+#if 0
 	printk(KERN_DEBUG "%s: %s used_idx %u len %d vq->vring.used->idx %d\n",
 			__func__, _vq->name, used_idx, len, vq->vring.used->idx);
-
+#endif
 	vq->last_used_idx++;
 
 	return 0;

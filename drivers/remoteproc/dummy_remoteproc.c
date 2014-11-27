@@ -292,9 +292,8 @@ void dummy_rproc_isr(void *data)
 	struct rproc *rproc= data;
 	int i;
 
-	printk(KERN_INFO "In %s %llu\n",__func__,++(rproc->intr_count));
 	/*
-	 * TODO:Notifyid should sould be derived runtime and don't iterate..
+	 * TODO:Notifyid should be derived runtime and don't iterate..
 	 */
 	for (i=0; i <= rproc->max_notifyid; i++) {
 		if(rproc_vq_interrupt(rproc,i) == IRQ_NONE) {
