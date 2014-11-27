@@ -34,18 +34,7 @@
 
 #include "dummy_proc.h"
 
-struct dummy_rproc_resourcetable {
-	struct resource_table		main_hdr;
-	u32				offset[2];
-	/* We'd need some physical mem */
-	struct fw_rsc_hdr		rsc_hdr_mem;
-	struct fw_rsc_carveout		rsc_mem;
-	/* And some rpmsg rings */
-	struct fw_rsc_hdr		rsc_hdr_vdev;
-	struct fw_rsc_vdev		rsc_vdev;
-	struct fw_rsc_vdev_vring	rsc_ring0;
-	struct fw_rsc_vdev_vring	rsc_ring1;
-};
+extern int localproc_init(void);
 
 struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable
 	__attribute__((section(".resource_table"), aligned(PAGE_SIZE))) =
@@ -101,7 +90,8 @@ struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable
 
 struct dummy_rproc_resourcetable *lproc = &dummy_remoteproc_resourcetable;
 unsigned char *x86_trampoline_bsp_base;
-
+bool is_bsp = false;
+u32 dummy_lproc_id = DUMMY_LPROC_BSP_ID;
 int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_params)
 {
 	unsigned long boot_error = 0, start_ip;
@@ -409,6 +399,7 @@ static int __init dummy_lproc_early_param(char *p)
 	smp_ops.smp_prepare_cpus = dummy_lproc_prepare_cpus;
 	lapic_timer_frequency = 1000000;
 
+	localproc_init();
 	return 0;
 }
 

@@ -14,14 +14,13 @@
 #define DUMMY_PROC_H
 
 #define DRV_NAME "dummy-rproc"
+#define LDRV_NAME "dummy-lproc"
 
 #define VMLINUX_FIRMWARE_SIZE			(200*1024*1024)
 
 #define DUMMY_LPROC_BSP_ID	0
 
 #define DUMMY_LPROC_IS_BSP()	(dummy_lproc_id == DUMMY_LPROC_BSP_ID)
-
-u32 dummy_lproc_id = DUMMY_LPROC_BSP_ID;
 
 int dummy_lproc_set_bsp_callback(void (*fn)(void *), void *data);
 int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_params);
@@ -35,5 +34,19 @@ extern unsigned long boot_params_phys_addr;
 #define TRAMPOLINE_SYM_BSP(x)						\
 	((void *)(x86_trampoline_bsp_base +					\
 		  ((const unsigned char *)(x) - x86_trampoline_bsp_start)))
+
+struct dummy_rproc_resourcetable {
+	struct resource_table		main_hdr;
+	u32				offset[2];
+	/* We'd need some physical mem */
+	struct fw_rsc_hdr		rsc_hdr_mem;
+	struct fw_rsc_carveout		rsc_mem;
+	/* And some rpmsg rings */
+	struct fw_rsc_hdr		rsc_hdr_vdev;
+	struct fw_rsc_vdev		rsc_vdev;
+	struct fw_rsc_vdev_vring	rsc_ring0;
+	struct fw_rsc_vdev_vring	rsc_ring1;
+};
+
 
 #endif /* DUMMY_PROC_H */
