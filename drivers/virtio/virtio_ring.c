@@ -883,11 +883,18 @@ static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
 		return -1U;
 
 	if(unlikely(!hack_flag)) {
-		_iov->iov_base = ioremap_cache(addr, 512 * 512);
+		printk(KERN_DEBUG "%s:io-remap-ing rpsmg static buffer pool"
+				" phy %p len %u\n", __func__, addr, 512 * 512);
+
+		_iov->iov_base = ioremap_cache(addr, 512 * 512); //TODO: Fix hard coding..
 		if(!_iov->iov_base) {
 			printk(KERN_ERR "iormap_cache failed\n");
 			return -1U;
 		}
+		printk(KERN_DEBUG "%s:io-remap-ing rpmsg static buffer pool"
+				" done virt %p len %u\n",
+				__func__, _iov->iov_base, 512 * 512);
+
 		hack_flag = 1;
 	} else {
 		_iov->iov_base = phys_to_virt(addr);

@@ -185,8 +185,11 @@ int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_param
 }
 EXPORT_SYMBOL(dummy_lproc_boot_remote_cpu);
 
-int __init dummy_lproc_kick_bsp(void)
+int dummy_lproc_kick_bsp(void)
 {
+	printk(KERN_INFO "%s: %p dummy_lproc_id: %p(%d)",
+			__func__,dummy_lproc_kick_bsp, &dummy_lproc_id, dummy_lproc_id);
+
 	if (DUMMY_LPROC_IS_BSP())
 		return 0;
 
@@ -198,12 +201,32 @@ int __init dummy_lproc_kick_bsp(void)
 EXPORT_SYMBOL(dummy_lproc_kick_bsp);
 late_initcall(dummy_lproc_kick_bsp);
 
+void (*dummy_lproc_ap_callback)(void *) = NULL;
+void *dummy_lproc_ap_data;
+int dummy_lproc_set_ap_callback(void (*fn)(void *), void *data)
+{
+	if (unlikely(DUMMY_LPROC_IS_BSP())) {
+		printk(KERN_ERR "%s: tried to register ap callback on -bsp.\n", __func__);
+		return -EFAULT;
+	}
+
+	dummy_lproc_ap_callback = fn;
+	dummy_lproc_ap_data = data;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(dummy_lproc_set_ap_callback);
+
 void __visible smp_dummy_lproc_kicked(void)
 {
 	ack_APIC_irq();
 	irq_enter();
 
 	printk(KERN_INFO "AP got kicked.\n");
+	if (likely(dummy_lproc_ap_callback))
+		dummy_lproc_ap_callback(dummy_lproc_ap_data);
+	else
+		WARN_ONCE(1, "%s: got an IPI on AP without any callback.\n", __func__);
 
 	irq_exit();
 }
@@ -236,22 +259,6 @@ void __visible smp_dummy_rproc_kicked(void)
 
 	irq_exit();
 }
-
-void (*dummy_lproc_ap_callback)(void *) = NULL;
-void *dummy_lproc_ap_data;
-int dummy_lproc_set_ap_callback(void (*fn)(void *), void *data)
-{
-	if (unlikely(DUMMY_LPROC_IS_BSP())) {
-		printk(KERN_ERR "%s: tried to register ap callback on -bsp.\n", __func__);
-		return -EFAULT;
-	}
-
-	dummy_lproc_ap_callback = fn;
-	dummy_lproc_ap_data = data;
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(dummy_lproc_set_ap_callback);
 
 
 static int __init dummy_proc_setup_intr(void)

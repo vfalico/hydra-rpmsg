@@ -70,7 +70,7 @@ static void rpmsg_sample_remove(struct rpmsg_channel *rpdev)
 }
 
 static struct rpmsg_device_id rpmsg_driver_sample_id_table[] = {
-	{ .name	= "rpmsg-client-sample" },
+	{ .name	= "lproc" },
 	{ },
 };
 MODULE_DEVICE_TABLE(rpmsg, rpmsg_driver_sample_id_table);

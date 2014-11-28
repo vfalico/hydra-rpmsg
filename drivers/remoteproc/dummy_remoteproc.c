@@ -96,7 +96,7 @@ static void dummy_handle_pci_handover(struct rproc *rproc, char *cmdline)
 static void dummy_handle_mem_regions(struct rproc *rproc, char *cmdline)
 {
 	struct rproc_mem_entry *carveout;
-	char mem_regs_str[256] = "cma=0@0 memmap=exactmap memmap=640K@0 ";
+	char mem_regs_str[256] = "cma=8M@0x3000000 memmap=exactmap memmap=640K@0 lpj=3332540 ";
 
 	list_for_each_entry(carveout, &rproc->carveouts, node) {
 		sprintf(mem_regs_str + strlen(mem_regs_str), "memmap=%d@0x%p ",
@@ -157,12 +157,6 @@ static int dummy_rproc_start(struct rproc *rproc)
 		goto free_bp;
 	}
 
-	//
-	sprintf(cmdline_override, "console=ttyS1,115200n8 earlyprintk=ttyS1,115200n8 memblock=debug acpi_irq_nobalance lapic_timer=1000000 mklinux debug memmap=640K@0 cma=16M@0xec00000 present_mask=%d memmap=0x2e90000$640K memmap=0xB0340000$0x4e800000 memmap=4G$0xfebf0000 memmap=500M@0x2f400000 memmap=50M$0x10000000 apic=debug lpj=333254",
-			1 << (boot_cpu - 1));
-	dummy_handle_pci_handover(rproc, cmdline_override);
-
-	//
 	if (!*cmdline_override) {
 		cmdline_build_str = kmalloc(COMMAND_LINE_SIZE, GFP_KERNEL);
 

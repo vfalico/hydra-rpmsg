@@ -29,6 +29,7 @@ struct lproc {
 	u64 intr_count;
 };
 extern void dummy_lproc_kick_bsp(void);
+
 static void lproc_virtio_notify(struct virtqueue *vq)
 {
 	/*
@@ -210,12 +211,54 @@ static struct virtqueue *lp_find_vq(struct virtio_device *vdev,
 	return vq;
 }
 
+/*
+ * TODO: Fix the following two routines to interrupt only the virtqueue which
+ * has some work to do.
+ */
+irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
+{
+	struct rproc_vdev *lvdev;
+	struct rproc_vring *lvring;
+
+	if(lproc && lproc->priv) {
+		lvdev = lproc->priv;
+		lvring = &lvdev->vring[notifyid];
+		return vring_interrupt(1, lvring->vq);
+	} else {
+		printk(KERN_INFO "%s: Failed interrupt! lproc %p priv %p\n",
+				__func__, lproc, lproc->priv);
+		return IRQ_NONE;
+	}
+}
+EXPORT_SYMBOL(lproc_vq_interrupt);
+
+void dummy_lproc_isr(void *data)
+{
+	struct lproc *lproc = data;
+	int i;
+
+	if (unlikely(!lproc)) {
+		printk(KERN_INFO "In %s %p\n",__func__, lproc);
+		return;
+	}
+
+	for (i=0; i <= lproc->max_notifyid; i++) {
+		if(lproc_vq_interrupt(lproc,i) == IRQ_NONE) {
+			printk(KERN_INFO "%s No work to do vq %d\n",__func__,i);
+		}
+	}
+}
+
+
 static int lproc_virtio_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 		       struct virtqueue *vqs[],
 		       vq_callback_t *callbacks[],
 		       const char *names[])
 {
 	int i, ret=0;
+	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
+	struct lproc *lproc = (struct lproc *)lvdev->rproc;
+
 	for (i = 0; i < nvqs; i++) {
 		vqs[i] = lp_find_vq(vdev, i, callbacks[i], names[i]);
 		if (IS_ERR(vqs[i])) {
@@ -223,6 +266,12 @@ static int lproc_virtio_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 			dev_dbg(&vdev->dev,"lproc: failed find rp_find_vq\n");
 		}
 	}
+
+	if(dummy_lproc_set_ap_callback(dummy_lproc_isr,(void *)lproc)) {
+		dev_err(&vdev->dev,"%s: registering callback for rproc "
+				"interrupts failed\n",__func__);
+	}
+
 	return ret;
 }
 
@@ -441,43 +490,6 @@ static void lproc_config_virtio(struct lproc *lproc)
 	/* look for virtio devices and register them */
 	ret = lproc_handle_resources(lproc, tablesz, lproc_vdev_handler);
 }
-/*
- * TODO: Fix the following two routines to interrupt only the virtqueue which
- * has some work to do.
- */
-irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
-{
-	struct rproc_vdev *lvdev;
-	struct rproc_vring *lvring;
-
-	if(lproc && lproc->priv) {
-		lvdev = lproc->priv;
-		lvring = &lvdev->vring[notifyid];
-		return vring_interrupt(1, lvring->vq);
-	} else {
-		printk(KERN_INFO "%s: Failed interrupt! lproc %p priv %p\n",
-				__func__, lproc, lproc->priv);
-		return IRQ_NONE;
-	}
-}
-EXPORT_SYMBOL(lproc_vq_interrupt);
-
-void dummy_lproc_isr(void *data)
-{
-	struct lproc *lproc = data;
-	int i;
-
-	if (unlikely(!lproc)) {
-		printk(KERN_INFO "In %s %p\n",__func__, lproc);
-		return;
-	}
-
-	for (i=0; i <= lproc->max_notifyid; i++) {
-		if(lproc_vq_interrupt(lproc,i) == IRQ_NONE) {
-			printk(KERN_INFO "%s No work to do vq %d\n",__func__,i);
-		}
-	}
-}
 
 static int localproc_probe(struct platform_device *pdev)
 {
@@ -496,11 +508,7 @@ static int localproc_probe(struct platform_device *pdev)
 
 	lproc->dev = &pdev->dev;
 	lproc_config_virtio(lproc);
-	if(dummy_lproc_set_ap_callback(dummy_lproc_isr,(void *)lproc)) {
-		dev_err(&pdev->dev,"%s: registering callback for rproc "
-				"interrupts failed\n",__func__);
-	}
-	return 0;
+		return 0;
 }
 
 /*
