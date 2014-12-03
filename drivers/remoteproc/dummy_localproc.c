@@ -187,9 +187,6 @@ EXPORT_SYMBOL(dummy_lproc_boot_remote_cpu);
 
 int dummy_lproc_kick_bsp(void)
 {
-	printk(KERN_INFO "%s: %p dummy_lproc_id: %p(%d)",
-			__func__,dummy_lproc_kick_bsp, &dummy_lproc_id, dummy_lproc_id);
-
 	if (DUMMY_LPROC_IS_BSP())
 		return 0;
 
