@@ -68,7 +68,7 @@ struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable
 		.gfeatures =	0,			/* negotiated features - blank */
 		.config_len =	0,			/* config len - none (??) */
 		.status =	0,			/* status - updated by bsp */
-		.num_of_vrings=	2,			/* we have 2 rings */
+		.num_of_vrings=	3,			/* we have 3 rings */
 		.reserved =	{ 0, 0},		/* reserved */
 	},
 	.rsc_ring0 = {
@@ -82,6 +82,13 @@ struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable
 		.da =		0,			/* we don't (??) care about the da */
 		.align =	PAGE_SIZE,		/* alignment */
 		.num =		512,			/* number of buffers */
+		.notifyid =	0,			/* magic number for IPC */
+		.reserved =	0,			/* reserved - 0 */
+	},
+	.rsc_ring2 = {
+		.da =		0,			/* we don't (??) care about the da */
+		.align =	PAGE_SIZE,		/* alignment */
+		.num =		128,			/* number of buffers */
 		.notifyid =	0,			/* magic number for IPC */
 		.reserved =	0,			/* reserved - 0 */
 	},

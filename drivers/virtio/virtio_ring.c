@@ -867,6 +867,7 @@ static unsigned __next_desc(struct vring_desc *desc)
 	//TODO: read barrier
 	return next;
 }
+#if 0
 static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
 {
 	struct iovec *_iov;
@@ -908,6 +909,21 @@ static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
 	printk(KERN_DEBUG "%s: iov_base 0x%x len %u \n",
 			__func__, _iov->iov_base, _iov->iov_len);
 #endif
+	return 1;
+}
+#endif
+static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
+{
+	struct iovec *_iov;
+
+	_iov = iov;
+
+	if(unlikely(!addr))
+		return -1U;
+
+	_iov->iov_base = addr;
+	_iov->iov_len  = len;
+
 	return 1;
 }
 

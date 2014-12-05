@@ -1037,7 +1037,7 @@ static void create_dummy_rpmsg_ept(struct virtproc_info *vrp)
 
 	strncpy(msg.name,"lproc",sizeof(msg.name));
 
-	msg.addr = 1048;	//hack till we use idr to get one.
+	msg.addr = 1048;	//TODO hack till we use idr to get one.
 	msg.flags|= RPMSG_NS_CREATE;
 
 	strncpy(chinfo.name, msg.name, sizeof(chinfo.name));
