@@ -60,7 +60,7 @@
  */
 struct virtproc_info {
 	struct virtio_device *vdev;
-	struct virtqueue *rvq, *svq;
+	struct virtqueue *rvq, *svq, *vvq;
 	void *rbufs, *sbufs;
 	unsigned int num_bufs;
 	int last_sbuf;
@@ -577,6 +577,25 @@ static int rpmsg_destroy_channel(struct virtproc_info *vrp,
 	return 0;
 }
 
+int rpmsg_phy_to_virt_iov(struct virtproc_info *vrp, struct iovec piov[],
+		 struct iovec viov[],int iov_size)
+{
+	int i;
+
+	for(i=0; i < iov_size; i++) {
+		viov[i].iov_base = (vrp->sbufs ? phys_to_virt(piov[i].iov_base)
+				: ioremap_cache(piov[i].iov_base,
+					piov[i].iov_base));
+		if(!viov[i].iov_base || viov[i].iov_base < 0) {
+			printk(KERN_ERR "%s failed\n",(vrp->sbufs ?
+					"phys_to_virt" :"ioremap_cache"));
+			return -1U;
+		}
+		viov[i].iov_len = piov[i].iov_len;
+	}
+	return 0;
+}
+
 extern int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
 		struct iovec iov[], int iov_size);
 extern int virtqueue_update_used_idx(struct virtqueue *_vq, u16 used_idx, int len);
@@ -586,32 +605,40 @@ extern void __debug_virtqueue(struct virtqueue *_vq, char *fmt);
  * In this version of RPMSG we follow producer/consumer model where the tx
  * always consume a buffer from the remote processor's rx ring and sends
  * down its data. So in principle, the rings are inversed between host and
- * remote processor.
- *
+* remote processor.
+*
  * TODO: A better implementation.
  *
  */
 static void *get_a_tx_buf(struct virtproc_info *vrp, u16 *idx)
 {
-	int in, out;
-	struct iovec iov[2]; // Ideally Array size should be UIO_MAXIOV, we are
+	int in, out, ret;
+	struct iovec piov[1]; // Ideally Array size should be UIO_MAXIOV, we are
 			     // not expecting more than 1 vector in this version.
+	struct iovec viov[1];
 
-	memset(iov,0,sizeof(iov));
+	memset(piov, 0, sizeof(piov));
+	memset(viov, 0, sizeof(viov));
 
 	/* support multiple concurrent senders */
 
-	*idx = virtqueue_get_avail_buf(vrp->svq, &in, &out, iov, ARRAY_SIZE(iov));
+	*idx = virtqueue_get_avail_buf(vrp->svq, &in, &out, piov,
+		       	ARRAY_SIZE(piov));
 	if(*idx < 0) {
 		printk(KERN_INFO "virtqueue_get_avail_buf failed\n");
 		return NULL;
 	}
 
 	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d iov %p len %lu\n",
-			__func__,vrp->svq, in, out, iov[0].iov_base,
-			iov[0].iov_len);
+			__func__,vrp->svq, in, out, piov[0].iov_base,
+			piov[0].iov_len);
 
-	return iov[0].iov_base;
+	ret = rpmsg_phy_to_virt_iov(vrp, piov, viov, ARRAY_SIZE(piov));
+	if(ret < 0) {
+		printk(KERN_INFO "rpmsg_phy_to_virt_iov failed\n");
+		return NULL;
+	}
+	return viov[0].iov_base;
 }
 
 /**
@@ -913,6 +940,38 @@ static void rpmsg_recv_done(struct virtqueue *rvq)
 	if (msgs_received)
 		virtqueue_kick(vrp->rvq);
 }
+static void rpmsg_recv_var_done(struct virtqueue *rvq)
+{
+	struct virtproc_info *vrp = rvq->vdev->priv;
+	struct device *dev = &rvq->vdev->dev;
+	struct rpmsg_hdr *msg;
+	unsigned int len, msgs_received = 0;
+	int err;
+#if 0
+	msg = virtqueue_get_buf(rvq, &len);
+	if (!msg) {
+		dev_err(dev, "uhm, incoming signal, but no used buffer ?\n");
+		return;
+	}
+
+	while (msg) {
+		err = rpmsg_recv_single(vrp, dev, msg, len);
+		if (err)
+			break;
+
+		msgs_received++;
+
+		msg = virtqueue_get_buf(rvq, &len);
+	};
+
+	dev_dbg(dev, "Received %u messages\n", msgs_received);
+
+	/* tell the remote processor we added another available rx buffer */
+	if (msgs_received)
+		virtqueue_kick(vrp->rvq);
+#endif
+}
+
 
 /*
  * This is invoked whenever the remote processor completed processing
@@ -929,6 +988,97 @@ static void rpmsg_xmit_done(struct virtqueue *svq)
 
 	/* wake up potential senders that are waiting for a tx buffer */
 	wake_up_interruptible(&vrp->sendq);
+}
+
+/*
+ * TODO
+ * 1. We need to seperate rproc and lproc by cacheline size.
+ * 2. Move this defenitions to remoteproc.h
+ * 3. Take care of endianness.
+ * 4. Write unnap routines.
+ * 5. What if multiple name service messages comes from same remote processor?
+ *
+ */
+struct fw_rsc_vdev_sbuf_desc{
+	unsigned long addr;
+	u32 len;
+} __packed;
+
+struct fw_rsc_vdev_config {
+	struct fw_rsc_vdev_sbuf_desc rproc_desc;
+	struct fw_rsc_vdev_sbuf_desc lproc_desc;
+} __packed;
+
+#define RSC_VDEV_CONFIG_SIZE	(sizeof(fw_rsc_vdev_config))
+
+/* Map the static buffers */
+static int rpmsg_map_remote_bufs(struct virtproc_info *vrp)
+{
+	struct virtio_device *vdev = vrp->vdev;
+	struct fw_rsc_vdev_sbuf_desc desc;
+	unsigned offset;
+	void *va;
+
+	BUG_ON(vrp->sbufs != 0);
+
+	memset(&desc, 0, sizeof(struct fw_rsc_vdev_sbuf_desc));
+
+	if(is_bsp) {
+		offset = offsetof(struct fw_rsc_vdev_config, lproc_desc);
+		vdev->config->get(vdev, offset, (void *)&desc,
+				 sizeof(struct fw_rsc_vdev_sbuf_desc));
+	} else {
+		offset = offsetof(struct fw_rsc_vdev_config, rproc_desc);
+		vdev->config->get(vdev, offset, (void *)&desc,
+				 sizeof(struct fw_rsc_vdev_sbuf_desc));
+	}
+
+	if(unlikely(!desc.addr || !desc.len))
+		return -1U;
+
+	printk(KERN_DEBUG "%s:io-remap rpsmg fixed size buffer pool"
+			" phy %p len %u\n", __func__, desc.addr, desc.len);
+#if 0
+	va = ioremap_cache(desc.addr, desc.len);
+	if(!va) {
+		printk(KERN_ERR "iormap_cache failed\n");
+		return -1U;
+	}
+#endif
+	printk(KERN_DEBUG "%s:io-remap rpmsg static buffer pool"
+			" done virt %p len %u\n",__func__, va, desc.len);
+
+	BUG_ON(desc.len != RPMSG_TOTAL_BUF_SPACE);
+	vrp->sbufs = va;
+}
+
+/*
+ * Copy recv buffer address for the remote processor
+ */
+static void rpmsg_setup_recv_buf(struct virtproc_info *vrp, unsigned len)
+{
+	struct virtio_device *vdev = vrp->vdev;
+	struct fw_rsc_vdev_sbuf_desc desc;
+	unsigned offset;
+
+	desc.addr = (unsigned long)vrp->bufs_dma;
+	desc.len = len;
+
+	BUG_ON(desc.addr == 0);
+	BUG_ON(desc.len != RPMSG_TOTAL_BUF_SPACE);
+
+	if(is_bsp) {
+		offset = offsetof(struct fw_rsc_vdev_config, rproc_desc);
+		vdev->config->set(vdev, offset, (void *)&desc,
+				 sizeof(struct fw_rsc_vdev_sbuf_desc));
+	} else {
+		offset = offsetof(struct fw_rsc_vdev_config, lproc_desc);
+		vdev->config->set(vdev, offset, (void *)&desc,
+				 sizeof(struct fw_rsc_vdev_sbuf_desc));
+	}
+
+	printk(KERN_DEBUG "%s:set rpsmg fixed size buffer pool addr"
+			" phy %p len %u\n", __func__, desc.addr, desc.len);
 }
 
 /* invoked when a name service announcement arrives */
@@ -981,6 +1131,26 @@ static void rpmsg_ns_cb(struct rpmsg_channel *rpdev, void *data, int len,
 		newch = rpmsg_create_channel(vrp, &chinfo);
 		if (!newch)
 			dev_err(dev, "rpmsg_create_channel failed\n");
+		/*
+		 * RMSG implementation with reversed ring logic uses two rings
+		 * for the fixed size send/recv. Currently, untill unless a name
+		 * service message arrives, there is no way by which we can
+		 * ensure that remote processor allocated buffers for fixed size
+		 * rings. In the case of homogeneous multi-kernel archituctures,
+		 * the fixed buffers for rpmsg are statically allocated at device
+		 * probe and virtio vring descriptors are initialized with them
+		 * after find_vqs. These buffer allocations are done from cma
+		 * using dma_alloc_coherent function and can be memmap-ed on
+		 * remote processor virtual address space using ioremap cache.
+		 * This can help in avoiding invoking ioremap cache for every
+		 * rpmsg send. Later, we should revisit this approach if have a
+		 * generic appraoch for fixed and variable size messages.
+		 *
+		 * TODO
+		 */
+		ret = rpmsg_map_remote_bufs(vrp);
+		if (ret < 0)
+			dev_err(dev, "rpmsg remote buffer mapping failed\n");
 	}
 }
 
@@ -995,15 +1165,19 @@ static struct device *rpmsg_setup_ring_attr(struct virtio_device *vdev,
 		parent = vdev->dev.parent->parent;
 		vq_cbs[0] = rpmsg_recv_done;
 		vq_cbs[1] = rpmsg_xmit_done;
+		vq_cbs[2] = rpmsg_recv_var_done;
 		names[0] = "recv";
 		names[1] = "send";
+		names[2] = "var";
 	} else {
 		*is_bsp = 0;
 		parent = vdev->dev.parent;
 		vq_cbs[0] = rpmsg_xmit_done;
 		vq_cbs[1] = rpmsg_recv_done;
+		vq_cbs[2] = rpmsg_recv_var_done;
 		names[0] = "send";
 		names[1] = "recv";
+		names[2] = "var";
 	}
 	return parent;
 }
@@ -1060,9 +1234,9 @@ static void create_dummy_rpmsg_ept(struct virtproc_info *vrp)
 
 static int rpmsg_probe(struct virtio_device *vdev)
 {
-	vq_callback_t *vq_cbs[2];
-	const char *names[2];
-	struct virtqueue *vqs[2];
+	vq_callback_t *vq_cbs[3];
+	const char *names[3];
+	struct virtqueue *vqs[3];
 	struct virtproc_info *vrp;
 	struct device *dev_parent;
 	void *bufs_va = NULL;
@@ -1083,8 +1257,8 @@ static int rpmsg_probe(struct virtio_device *vdev)
 
 	dev_parent = rpmsg_setup_ring_attr(vdev, &is_bsp, vq_cbs, names);
 
-	/* We expect two virtqueues, rx and tx (and in this order) */
-	err = vdev->config->find_vqs(vdev, 2, vqs, vq_cbs, names);
+	/* We expect three virtqueues, rx, tx and var (and in this order) */
+	err = vdev->config->find_vqs(vdev, 3, vqs, vq_cbs, names);
 	if (err){
 		dev_err(&vdev->dev, "failed vqs creation %x\n",err);
 		goto free_vrp;
@@ -1092,6 +1266,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 
 	vrp->rvq = vqs[(is_bsp?0:1)];
 	vrp->svq = vqs[(is_bsp?1:0)];
+	vrp->vvq = vqs[2];
 
 	/* allocate coherent memory for the buffers */
 	bufs_va = dma_alloc_coherent(dev_parent,
@@ -1119,7 +1294,6 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, cpu_addr,
 								GFP_KERNEL);
 		WARN_ON(err); /* sanity check; this can't really happen */
-
 	}
 	/* suppress "tx-complete" interrupts */
 	virtqueue_disable_cb(vrp->svq);
@@ -1145,9 +1319,15 @@ static int rpmsg_probe(struct virtio_device *vdev)
 
 	dev_info(&vdev->dev, "rpmsg %s is online\n",((is_bsp) ? "host":"lproc"));
 
+	rpmsg_setup_recv_buf(vrp, RPMSG_TOTAL_BUF_SPACE);
+
 	/* Send the initial name service message from remote processor */
-	if(!is_bsp)
+	if(!is_bsp){
+		err = rpmsg_map_remote_bufs(vrp);
+		if (err < 0)
+			dev_err(&vdev->dev,"rpmsg remote buffer mapping failed\n");
 		create_dummy_rpmsg_ept(vrp);
+	}
 	return 0;
 
 free_coherent:

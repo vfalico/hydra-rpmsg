@@ -867,51 +867,7 @@ static unsigned __next_desc(struct vring_desc *desc)
 	//TODO: read barrier
 	return next;
 }
-#if 0
-static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
-{
-	struct iovec *_iov;
-	static bool hack_flag = 0;
 
-	BUG_ON(iov_size == 0);
-
-	_iov = iov;
-#if 0
-	printk(KERN_DEBUG "%s: addr %p len %u iov %p iov_size %d\n",
-			__func__, addr, len, iov, iov_size);
-#endif
-	if(unlikely(!addr))
-		return -1U;
-
-	if(unlikely(!hack_flag)) {
-		printk(KERN_DEBUG "%s:io-remap-ing rpsmg static buffer pool"
-				" phy %p len %u\n", __func__, addr, 512 * 512);
-
-		_iov->iov_base = ioremap_cache(addr, 512 * 512); //TODO: Fix hard coding..
-		if(!_iov->iov_base) {
-			printk(KERN_ERR "iormap_cache failed\n");
-			return -1U;
-		}
-		printk(KERN_DEBUG "%s:io-remap-ing rpmsg static buffer pool"
-				" done virt %p len %u\n",
-				__func__, _iov->iov_base, 512 * 512);
-
-		hack_flag = 1;
-	} else {
-		_iov->iov_base = phys_to_virt(addr);
-		if(!_iov->iov_base) {
-			printk(KERN_ERR "phys_to_virt failed\n");
-			return -1U;
-		}
-	}
-	_iov->iov_len  = len;
-#if 0
-	printk(KERN_DEBUG "%s: iov_base 0x%x len %u \n",
-			__func__, _iov->iov_base, _iov->iov_len);
-#endif
-	return 1;
-}
-#endif
 static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
 {
 	struct iovec *_iov;
@@ -924,7 +880,7 @@ static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
 	_iov->iov_base = addr;
 	_iov->iov_len  = len;
 
-	return 1;
+	return 0;
 }
 
 int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,

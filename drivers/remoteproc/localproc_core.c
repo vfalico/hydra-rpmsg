@@ -117,13 +117,39 @@ static void lproc_virtio_finalize_features(struct virtio_device *vdev)
 static void lproc_virtio_get(struct virtio_device *vdev, unsigned offset,
 							void *buf, unsigned len)
 {
-	printk(KERN_INFO "%s: Not implemented yet\n", __func__);
+	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
+	struct lproc *lproc = (struct lproc *)lvdev->rproc;
+	struct fw_rsc_vdev *rsc;
+	void *cfg;
+
+	rsc = (void *)lproc->table_ptr + lvdev->rsc_offset;
+	cfg = &rsc->vring[rsc->num_of_vrings];
+
+	if (offset + len > rsc->config_len || offset + len < len) {
+		dev_err(&vdev->dev, "lproc_virtio_get: access out of bounds\n");
+		return;
+	}
+
+	memcpy(buf, cfg + offset, len);
 }
 
 static void lproc_virtio_set(struct virtio_device *vdev, unsigned offset,
 		      const void *buf, unsigned len)
 {
-	printk(KERN_INFO "%s: Not implemented yet\n", __func__);
+	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
+	struct lproc *lproc = (struct lproc *)lvdev->rproc;
+	struct fw_rsc_vdev *rsc;
+	void *cfg;
+
+	rsc = (void *)lproc->table_ptr + lvdev->rsc_offset;
+	cfg = &rsc->vring[rsc->num_of_vrings];
+
+	if (offset + len > rsc->config_len || offset + len < len) {
+		dev_err(&vdev->dev, "rproc_virtio_set: access out of bounds\n");
+		return;
+	}
+
+	memcpy(cfg + offset, buf, len);
 }
 
 int lproc_map_vring(struct rproc_vdev *lvdev, int i)
