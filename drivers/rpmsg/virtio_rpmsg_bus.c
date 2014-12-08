@@ -34,6 +34,7 @@
 #include <linux/rpmsg.h>
 #include <linux/mutex.h>
 #include <linux/device.h>
+#include <linux/uio.h>
 
 /**
  * struct virtproc_info - virtual remote processor state
@@ -53,6 +54,7 @@
  * @sendq:	wait queue of sending contexts waiting for a tx buffers
  * @sleepers:	number of senders that are waiting for a tx buffer
  * @ns_ept:	the bus's name service endpoint
+ * @config_work: Process context for virtio config space updates.
  *
  * This structure stores the rpmsg state of a given virtio remote processor
  * device (there might be several virtio proc devices for each physical
@@ -71,6 +73,7 @@ struct virtproc_info {
 	wait_queue_head_t sendq;
 	atomic_t sleepers;
 	struct rpmsg_endpoint *ns_ept;
+	struct work_struct config_work;
 };
 
 /**
@@ -143,6 +146,11 @@ rpmsg_show_attr(announce, announce ? "true" : "false", "%s\n");
  * to change if/when we want to.
  */
 static unsigned int rpmsg_dev_index;
+
+/*
+ * Work queue for handling config changes in rpmsg virtio device
+ */
+static struct workqueue_struct *rpmsg_virtio_cfg_wq;
 
 /*
  * Who am I ? rpmsg running on rproc/lproc
@@ -577,18 +585,18 @@ static int rpmsg_destroy_channel(struct virtproc_info *vrp,
 	return 0;
 }
 
-int rpmsg_phy_to_virt_iov(struct virtproc_info *vrp, struct iovec piov[],
-		 struct iovec viov[],int iov_size)
+int rpmsg_phy_to_virt_iov(bool ptov, struct iovec piov[], struct iovec viov[],
+				int iov_size)
 {
 	int i;
 
 	for(i=0; i < iov_size; i++) {
-		viov[i].iov_base = (vrp->sbufs ? phys_to_virt(piov[i].iov_base)
+		viov[i].iov_base = (ptov ? phys_to_virt(piov[i].iov_base)
 				: ioremap_cache(piov[i].iov_base,
-					piov[i].iov_base));
+					piov[i].iov_len));
 		if(!viov[i].iov_base || viov[i].iov_base < 0) {
-			printk(KERN_ERR "%s failed\n",(vrp->sbufs ?
-					"phys_to_virt" :"ioremap_cache"));
+			printk(KERN_ERR "%s failed\n",(ptov ? "phys_to_virt" :
+						"ioremap_cache"));
 			return -1U;
 		}
 		viov[i].iov_len = piov[i].iov_len;
@@ -616,6 +624,7 @@ static void *get_a_tx_buf(struct virtproc_info *vrp, u16 *idx)
 	struct iovec piov[1]; // Ideally Array size should be UIO_MAXIOV, we are
 			     // not expecting more than 1 vector in this version.
 	struct iovec viov[1];
+	bool ptov = vrp->sbufs ? true : false;
 
 	memset(piov, 0, sizeof(piov));
 	memset(viov, 0, sizeof(viov));
@@ -629,15 +638,18 @@ static void *get_a_tx_buf(struct virtproc_info *vrp, u16 *idx)
 		return NULL;
 	}
 
-	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d iov %p len %lu\n",
+	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d piov %p len %lu\n",
 			__func__,vrp->svq, in, out, piov[0].iov_base,
 			piov[0].iov_len);
 
-	ret = rpmsg_phy_to_virt_iov(vrp, piov, viov, ARRAY_SIZE(piov));
+	ret = rpmsg_phy_to_virt_iov(ptov, piov, viov, ARRAY_SIZE(piov));
 	if(ret < 0) {
 		printk(KERN_INFO "rpmsg_phy_to_virt_iov failed\n");
 		return NULL;
 	}
+	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d viov %p len %lu\n",
+			__func__,vrp->svq, in, out, viov[0].iov_base,
+			viov[0].iov_len);
 	return viov[0].iov_base;
 }
 
@@ -942,12 +954,14 @@ static void rpmsg_recv_done(struct virtqueue *rvq)
 }
 static void rpmsg_recv_var_done(struct virtqueue *rvq)
 {
+
+#if 0
 	struct virtproc_info *vrp = rvq->vdev->priv;
 	struct device *dev = &rvq->vdev->dev;
 	struct rpmsg_hdr *msg;
 	unsigned int len, msgs_received = 0;
 	int err;
-#if 0
+
 	msg = virtqueue_get_buf(rvq, &len);
 	if (!msg) {
 		dev_err(dev, "uhm, incoming signal, but no used buffer ?\n");
@@ -1036,16 +1050,14 @@ static int rpmsg_map_remote_bufs(struct virtproc_info *vrp)
 	if(unlikely(!desc.addr || !desc.len))
 		return -1U;
 
-	printk(KERN_DEBUG "%s:io-remap rpsmg fixed size buffer pool"
+	printk(KERN_DEBUG "%s:ioremap rpsmg fixed size buffer pool"
 			" phy %p len %u\n", __func__, desc.addr, desc.len);
-#if 0
 	va = ioremap_cache(desc.addr, desc.len);
 	if(!va) {
 		printk(KERN_ERR "iormap_cache failed\n");
 		return -1U;
 	}
-#endif
-	printk(KERN_DEBUG "%s:io-remap rpmsg static buffer pool"
+	printk(KERN_DEBUG "%s:ioremap rpmsg fixed size buffer pool"
 			" done virt %p len %u\n",__func__, va, desc.len);
 
 	BUG_ON(desc.len != RPMSG_TOTAL_BUF_SPACE);
@@ -1080,7 +1092,16 @@ static void rpmsg_setup_recv_buf(struct virtproc_info *vrp, unsigned len)
 	printk(KERN_DEBUG "%s:set rpsmg fixed size buffer pool addr"
 			" phy %p len %u\n", __func__, desc.addr, desc.len);
 }
-
+/*
+ * TODO
+ * Currently we don't have a way in rpmsg virtio bus to receive notifications
+ * for the config space updates. So, the virtio bus has to be improved at a
+ * later phase and should be capable of invoking this routine from vdev driver.
+ */
+static void rpmsg_virtio_cfg_changed(struct virtproc_info *vrp)
+{
+	queue_work(rpmsg_virtio_cfg_wq, &vrp->config_work);
+}
 /* invoked when a name service announcement arrives */
 static void rpmsg_ns_cb(struct rpmsg_channel *rpdev, void *data, int len,
 						void *priv, unsigned long src)
@@ -1147,10 +1168,10 @@ static void rpmsg_ns_cb(struct rpmsg_channel *rpdev, void *data, int len,
 		 * generic appraoch for fixed and variable size messages.
 		 *
 		 * TODO
+		 * 1. This has to be modified to get invoked from virtio layer
+		 * as a callback.
 		 */
-		ret = rpmsg_map_remote_bufs(vrp);
-		if (ret < 0)
-			dev_err(dev, "rpmsg remote buffer mapping failed\n");
+		rpmsg_virtio_cfg_changed(vrp);
 	}
 }
 
@@ -1231,7 +1252,16 @@ static void create_dummy_rpmsg_ept(struct virtproc_info *vrp)
 		dev_err(dev, "failed to announce service %d\n", ret);
 
 }
+static void rpmsg_virtio_cfg_changed_work(struct work_struct *work)
+{
+	struct virtproc_info *vrp =
+		container_of(work, struct virtproc_info, config_work);
+	int ret;
 
+	ret = rpmsg_map_remote_bufs(vrp);
+	if (ret < 0)
+		dev_err(&vrp->vdev->dev, "rpmsg remote buffer mapping failed\n");
+}
 static int rpmsg_probe(struct virtio_device *vdev)
 {
 	vq_callback_t *vq_cbs[3];
@@ -1320,6 +1350,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	dev_info(&vdev->dev, "rpmsg %s is online\n",((is_bsp) ? "host":"lproc"));
 
 	rpmsg_setup_recv_buf(vrp, RPMSG_TOTAL_BUF_SPACE);
+	INIT_WORK(&vrp->config_work, rpmsg_virtio_cfg_changed_work);
 
 	/* Send the initial name service message from remote processor */
 	if(!is_bsp){
@@ -1395,15 +1426,21 @@ static int __init rpmsg_init(void)
 {
 	int ret;
 
+	rpmsg_virtio_cfg_wq = alloc_workqueue("virtio-rpmsg", 0, 0);
+	if (!rpmsg_virtio_cfg_wq)
+		return -ENOMEM;
+
 	ret = bus_register(&rpmsg_bus);
 	if (ret) {
 		pr_err("failed to register rpmsg bus: %d\n", ret);
+		destroy_workqueue(rpmsg_virtio_cfg_wq);
 		return ret;
 	}
 
 	ret = register_virtio_driver(&virtio_ipc_driver);
 	if (ret) {
 		pr_err("failed to register virtio driver: %d\n", ret);
+		destroy_workqueue(rpmsg_virtio_cfg_wq);
 		bus_unregister(&rpmsg_bus);
 	}
 
@@ -1413,6 +1450,7 @@ subsys_initcall(rpmsg_init);
 
 static void __exit rpmsg_fini(void)
 {
+	destroy_workqueue(rpmsg_virtio_cfg_wq);
 	unregister_virtio_driver(&virtio_ipc_driver);
 	bus_unregister(&rpmsg_bus);
 }
