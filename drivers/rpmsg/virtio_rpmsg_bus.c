@@ -618,16 +618,12 @@ extern void __debug_virtqueue(struct virtqueue *_vq, char *fmt);
  * TODO: A better implementation.
  *
  */
-static void *get_a_tx_buf(struct virtproc_info *vrp, u16 *idx)
+static void *get_a_fixed_size_tx_buf(struct virtproc_info *vrp, u16 *idx)
 {
 	int in, out, ret;
-	struct iovec piov[1]; // Ideally Array size should be UIO_MAXIOV, we are
-			     // not expecting more than 1 vector in this version.
-	struct iovec viov[1];
+	struct iovec piov[1] = { piov[0].iov_base = 0, piov[0].iov_len = 0 };
+	struct iovec viov[1] = { viov[0].iov_base = 0, viov[0].iov_len = 0 };
 	bool ptov = vrp->sbufs ? true : false;
-
-	memset(piov, 0, sizeof(piov));
-	memset(viov, 0, sizeof(viov));
 
 	/* support multiple concurrent senders */
 
@@ -774,7 +770,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 
 	/*
 	 * TODO: This implementation of RPMSG has a two step transmit. So
-	 * taking tx_lock outside get_a_tx_buf and releasing it after
+	 * taking tx_lock outside get_a_fixed_size_tx_buf and releasing it after
 	 * virtqueue_update_used_idx. Again, we shouldn't sleep for tx buffers
 	 * in this version, but incase, it is not good to sleep holding lock.
 	 */
@@ -782,7 +778,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 	mutex_lock(&vrp->tx_lock);
 
 	/* grab a buffer */
-	msg = get_a_tx_buf(vrp, &idx);
+	msg = get_a_fixed_size_tx_buf(vrp, &idx);
 
 	if (!msg && !wait){
 		dev_err(dev, "no tx buffers\n");
@@ -801,7 +797,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 		 * if later this happens to be required, it'd be easy to add.
 		 */
 		err = wait_event_interruptible_timeout(vrp->sendq,
-					(msg = get_a_tx_buf(vrp, &idx)),
+					(msg = get_a_fixed_size_tx_buf(vrp, &idx)),
 					msecs_to_jiffies(15000));
 
 		/* disable "tx-complete" interrupts if we're the last sleeper */
@@ -858,7 +854,90 @@ out:
 	return err;
 }
 EXPORT_SYMBOL(rpmsg_send_offchannel_raw);
+#if 0
+int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
+					void *s_data, int s_len, void *r_data,
+					int r_len, bool wait)
+{
+	struct virtproc_info *vrp = rpdev->vrp;
+	struct device *dev = &rpdev->dev;
+	struct scatterlist sg;
+	struct rpmsg_hdr *msg;
+	int err;
 
+	/* bcasting isn't allowed */
+	if (src == RPMSG_ADDR_ANY || dst == RPMSG_ADDR_ANY) {
+		dev_err(dev, "invalid addr (src 0x%x, dst 0x%x)\n", src, dst);
+		return -EINVAL;
+	}
+
+	/* grab a buffer */
+	msg = get_a_tx_buf(vrp);
+	if (!msg && !wait)
+		return -ENOMEM;
+
+	/* no free buffer ? wait for one (but bail after 15 seconds) */
+	while (!msg) {
+		/* enable "tx-complete" interrupts, if not already enabled */
+		rpmsg_upref_sleepers(vrp);
+
+		/*
+		 * sleep until a free buffer is available or 15 secs elapse.
+		 * the timeout period is not configurable because there's
+		 * little point in asking drivers to specify that.
+		 * if later this happens to be required, it'd be easy to add.
+		 */
+		err = wait_event_interruptible_timeout(vrp->sendq,
+					(msg = get_a_tx_buf(vrp)),
+					msecs_to_jiffies(15000));
+
+		/* disable "tx-complete" interrupts if we're the last sleeper */
+		rpmsg_downref_sleepers(vrp);
+
+		/* timeout ? */
+		if (!err) {
+			dev_err(dev, "timeout waiting for a tx buffer\n");
+			return -ERESTARTSYS;
+		}
+	}
+
+	msg->len = len;
+	msg->flags = 0;
+	msg->src = src;
+	msg->dst = dst;
+	msg->reserved = 0;
+	memcpy(msg->data, data, len);
+
+	dev_dbg(dev, "TX From 0x%x, To 0x%x, Len %d, Flags %d, Reserved %d\n",
+					msg->src, msg->dst, msg->len,
+					msg->flags, msg->reserved);
+	print_hex_dump(KERN_DEBUG, "rpmsg_virtio TX: ", DUMP_PREFIX_NONE, 16, 1,
+					msg, sizeof(*msg) + msg->len, true);
+
+	sg_init_one(&sg, msg, sizeof(*msg) + len);
+
+	mutex_lock(&vrp->tx_lock);
+
+	/* add message to the remote processor's virtqueue */
+	err = virtqueue_add_outbuf(vrp->svq, &sg, 1, msg, GFP_KERNEL);
+	if (err) {
+		/*
+		 * need to reclaim the buffer here, otherwise it's lost
+		 * (memory won't leak, but rpmsg won't use it again for TX).
+		 * this will wait for a buffer management overhaul.
+		 */
+		dev_err(dev, "virtqueue_add_outbuf failed: %d\n", err);
+		goto out;
+	}
+
+	/* tell the remote processor it has a pending message to read */
+	virtqueue_kick(vrp->svq);
+out:
+	mutex_unlock(&vrp->tx_lock);
+	return err;
+}
+EXPORT_SYMBOL(rpmsg_send_recv_raw);
+#endif
 static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 			     struct rpmsg_hdr *msg, unsigned int len)
 {
@@ -1092,6 +1171,7 @@ static void rpmsg_setup_recv_buf(struct virtproc_info *vrp, unsigned len)
 	printk(KERN_DEBUG "%s:set rpsmg fixed size buffer pool addr"
 			" phy %p len %u\n", __func__, desc.addr, desc.len);
 }
+
 /*
  * TODO
  * Currently we don't have a way in rpmsg virtio bus to receive notifications
@@ -1102,6 +1182,7 @@ static void rpmsg_virtio_cfg_changed(struct virtproc_info *vrp)
 {
 	queue_work(rpmsg_virtio_cfg_wq, &vrp->config_work);
 }
+
 /* invoked when a name service announcement arrives */
 static void rpmsg_ns_cb(struct rpmsg_channel *rpdev, void *data, int len,
 						void *priv, unsigned long src)
