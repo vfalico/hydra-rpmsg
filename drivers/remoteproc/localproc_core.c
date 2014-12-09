@@ -237,6 +237,7 @@ static struct virtqueue *lp_find_vq(struct virtio_device *vdev,
 	return vq;
 }
 
+extern irqreturn_t vring_avail_interrupt(int irq, void *_vq);
 /*
  * TODO: Fix the following two routines to interrupt only the virtqueue which
  * has some work to do.
@@ -249,7 +250,8 @@ irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
 	if(lproc && lproc->priv) {
 		lvdev = lproc->priv;
 		lvring = &lvdev->vring[notifyid];
-		return vring_interrupt(1, lvring->vq);
+		return ((notifyid == 2) ? vring_avail_interrupt(1, lvring->vq)
+		 		: vring_interrupt(1, lvring->vq));
 	} else {
 		printk(KERN_INFO "%s: Failed interrupt! lproc %p priv %p\n",
 				__func__, lproc, lproc->priv);
@@ -258,7 +260,7 @@ irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
 }
 EXPORT_SYMBOL(lproc_vq_interrupt);
 
-void dummy_lproc_isr(void *data)
+void dummy_lproc_callback(void *data)
 {
 	struct lproc *lproc = data;
 	int i;
@@ -293,7 +295,7 @@ static int lproc_virtio_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 		}
 	}
 
-	if(dummy_lproc_set_ap_callback(dummy_lproc_isr,(void *)lproc)) {
+	if(dummy_lproc_set_ap_callback(dummy_lproc_callback,(void *)lproc)) {
 		dev_err(&vdev->dev,"%s: registering callback for rproc "
 				"interrupts failed\n",__func__);
 	}
