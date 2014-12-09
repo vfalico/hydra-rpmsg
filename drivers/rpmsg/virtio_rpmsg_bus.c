@@ -80,6 +80,7 @@ struct virtproc_info {
 	atomic_t sleepers;
 	struct rpmsg_endpoint *ns_ept;
 	struct work_struct config_work;
+	struct work_struct var_size_recv_work;
 	struct scatterlist sg[RPMSG_VAR_VIRTQUEUE_NUM];
 };
 
@@ -158,6 +159,7 @@ static unsigned int rpmsg_dev_index;
  * Work queue for handling config changes in rpmsg virtio device
  */
 static struct workqueue_struct *rpmsg_virtio_cfg_wq;
+static struct workqueue_struct *rpmsg_virtio_rcv_wq;
 
 /*
  * Who am I ? rpmsg running on rproc/lproc
@@ -592,8 +594,8 @@ static int rpmsg_destroy_channel(struct virtproc_info *vrp,
 	return 0;
 }
 
-int rpmsg_phy_to_virt_iov(bool ptov, struct iovec piov[], struct iovec viov[],
-				int iov_size)
+int rpmsg_phy_to_virt_iov(struct iovec piov[], struct iovec viov[],
+				int iov_size, bool ptov)
 {
 	int i;
 
@@ -645,7 +647,7 @@ static void *get_a_fixed_size_tx_buf(struct virtproc_info *vrp, u16 *idx)
 			__func__,vrp->svq, in, out, piov[0].iov_base,
 			piov[0].iov_len);
 
-	ret = rpmsg_phy_to_virt_iov(ptov, piov, viov, ARRAY_SIZE(piov));
+	ret = rpmsg_phy_to_virt_iov(piov, viov, ARRAY_SIZE(piov), ptov);
 	if(ret < 0) {
 		printk(KERN_INFO "rpmsg_phy_to_virt_iov failed\n");
 		return NULL;
@@ -1104,37 +1106,50 @@ static void rpmsg_recv_done(struct virtqueue *rvq)
 		virtqueue_kick(vrp->rvq);
 }
 
-static void rpmsg_recv_var_done(struct virtqueue *vvq)
+static void rpmsg_virtio_var_size_recv_work(struct work_struct *work)
 {
-#if 0
-	struct virtproc_info *vrp = rvq->vdev->priv;
-	struct device *dev = &rvq->vdev->dev;
-	struct rpmsg_hdr *msg;
-	unsigned int len, msgs_received = 0;
-	int err;
+	struct virtproc_info *vrp =
+		container_of(work, struct virtproc_info, var_size_recv_work);
+	int in, out, ret;
+	struct iovec piov[2];
+	struct iovec viov[2];
+	u16 idx;
 
-	msg = virtqueue_get_buf(rvq, &len);
-	if (!msg) {
-		dev_err(dev, "uhm, incoming signal, but no used buffer ?\n");
-		return;
+	idx = virtqueue_get_avail_buf(vrp->svq, &in, &out, piov,
+		       					ARRAY_SIZE(piov));
+	if(idx < 0) {
+		printk(KERN_INFO "virtqueue_get_avail_buf failed\n");
+		return NULL;
 	}
 
-	while (msg) {
-		err = rpmsg_recv_single(vrp, dev, msg, len);
-		if (err)
-			break;
+	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d piov %p len %lu\n",
+			__func__,vrp->svq, in, out, piov[0].iov_base,
+			piov[0].iov_len);
 
-		msgs_received++;
+	ret = rpmsg_phy_to_virt_iov(piov, viov, ARRAY_SIZE(piov), false);
+	if(ret < 0) {
+		printk(KERN_INFO "rpmsg_phy_to_virt_iov failed\n");
+		return NULL;
+	}
+	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d viov %p len %lu\n",
+			__func__,vrp->svq, in, out, viov[0].iov_base,
+			viov[0].iov_len);
+}
 
-		msg = virtqueue_get_buf(rvq, &len);
-	};
+static void rpmsg_virtio_var_size_recv(struct virtproc_info *vrp)
+{
+	queue_work(rpmsg_virtio_var_size_recv_work, &vrp->var_size_recv_work);
+}
 
-	dev_dbg(dev, "Received %u messages\n", msgs_received);
-
-	/* tell the remote processor we added another available rx buffer */
-	if (msgs_received)
-		virtqueue_kick(vrp->rvq);
-#endif
+void rpmsg_recv_var_done(struct virtqueue *vvq)
+{
+	struct virtproc_info *vrp = vvq->vdev->priv;
+	struct device *dev = &vvq->vdev->dev;
+	if(is_bsp) {
+		//
+		//
+	} else
+		rpmsg_virtio_var_size_recv(vrp);
 }
 
 
@@ -1503,7 +1518,9 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	dev_info(&vdev->dev, "rpmsg %s is online\n",((is_bsp) ? "host":"lproc"));
 
 	rpmsg_setup_recv_buf(vrp, RPMSG_TOTAL_BUF_SPACE);
+
 	INIT_WORK(&vrp->config_work, rpmsg_virtio_cfg_changed_work);
+	INIT_WORK(&vrp->var_size_recv_work, rpmsg_virtio_var_size_recv_work);
 
 	/* Send the initial name service message from remote processor */
 	if(!is_bsp){
@@ -1579,24 +1596,33 @@ static int __init rpmsg_init(void)
 {
 	int ret;
 
-	rpmsg_virtio_cfg_wq = alloc_workqueue("virtio-rpmsg", 0, 0);
+	rpmsg_virtio_cfg_wq = alloc_workqueue("virtio-rpmsg-cfg", 0, 0);
 	if (!rpmsg_virtio_cfg_wq)
 		return -ENOMEM;
+
+	rpmsg_virtio_rcv_wq = alloc_workqueue("virtio-rpmsg-recv", 0, 0);
+	if (!rpmsg_virtio_rcv_wq)
+		goto free_cfg_workqueue;
 
 	ret = bus_register(&rpmsg_bus);
 	if (ret) {
 		pr_err("failed to register rpmsg bus: %d\n", ret);
-		destroy_workqueue(rpmsg_virtio_cfg_wq);
-		return ret;
+		goto free_rcv_workqueue;
 	}
 
 	ret = register_virtio_driver(&virtio_ipc_driver);
 	if (ret) {
 		pr_err("failed to register virtio driver: %d\n", ret);
-		destroy_workqueue(rpmsg_virtio_cfg_wq);
-		bus_unregister(&rpmsg_bus);
+		goto unregister_bus;
 	}
+	return ret;
 
+unregister_bus:
+	bus_unregister(&rpmsg_bus);
+free_rcv_workqueue:
+	destroy_workqueue(rpmsg_virtio_rcv_wq);
+free_cfg_workqueue:
+	destroy_workqueue(rpmsg_virtio_cfg_wq);
 	return ret;
 }
 subsys_initcall(rpmsg_init);
@@ -1604,6 +1630,7 @@ subsys_initcall(rpmsg_init);
 static void __exit rpmsg_fini(void)
 {
 	destroy_workqueue(rpmsg_virtio_cfg_wq);
+	destroy_workqueue(rpmsg_virtio_rcv_wq);
 	unregister_virtio_driver(&virtio_ipc_driver);
 	bus_unregister(&rpmsg_bus);
 }

@@ -968,14 +968,8 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
 		if(desc->flags & VRING_DESC_F_WRITE)
 			*in += ret;
 		else {
-			/*
-			 * We are not expecting RPMSG to have buffers with in &
-			 * out in this version. This will change.
-			 * TODO:
-			 */
 			printk(KERN_ERR "We are not expecting out buffers here\n");
 			*out += ret;
-			dump_stack();
 		}
 	} while((i = __next_desc(desc)) != -1);
 
