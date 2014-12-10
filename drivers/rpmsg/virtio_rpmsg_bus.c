@@ -36,11 +36,6 @@
 #include <linux/device.h>
 #include <linux/uio.h>
 
-/*
- * TODO add to header and add comments
- */
-#define RPMSG_VAR_VIRTQUEUE_NUM	128
-
 /**
  * struct virtproc_info - virtual remote processor state
  * @vdev:	the virtio device
@@ -60,7 +55,6 @@
  * @sleepers:	number of senders that are waiting for a tx buffer
  * @ns_ept:	the bus's name service endpoint
  * @config_work: Process context for virtio config space updates.
- * @sg:		Scatterlist for variable sized messages.
  *
  * This structure stores the rpmsg state of a given virtio remote processor
  * device (there might be several virtio proc devices for each physical
@@ -81,7 +75,6 @@ struct virtproc_info {
 	struct rpmsg_endpoint *ns_ept;
 	struct work_struct config_work;
 	struct work_struct var_size_recv_work;
-	struct scatterlist sg[RPMSG_VAR_VIRTQUEUE_NUM];
 };
 
 /**
@@ -864,6 +857,11 @@ out:
 }
 EXPORT_SYMBOL(rpmsg_send_offchannel_raw);
 
+/*
+ * TODO add to header and add comments
+ */
+#define RPMSG_VAR_VIRTQUEUE_NUM	32
+
 struct rpmsg_var_msg {
 	u32 len;
 	u8 *data;
@@ -876,7 +874,43 @@ struct rpmsg_req {
 	struct rpmsg_var_msg urecv;
 	struct rpmsg_var_msg ksend;
 	struct rpmsg_var_msg krecv;
+	struct scatterlist sg[RPMSG_VAR_VIRTQUEUE_NUM];
 };
+
+void __debug_dump_rpmsg_req(struct virtproc_info *vrp, struct rpmsg_req *req,
+				struct scatterlist *sg, int in, int out,
+				struct iovec iov[],int iov_count)
+{
+	struct device *dev = &vrp->vdev->dev;
+	int i;
+
+	if(req) {
+		dev_info(dev, "usd=%p usl=%d ksd=%p ksl=%d\n",req->usend.data,
+				req->usend.len, req->ksend.data, req->ksend.len);
+		dev_info(dev, "urd=%p url=%d krd=%p krl=%d\n",req->urecv.data,
+				req->urecv.len, req->krecv.data, req->krecv.len);
+	}
+	if(sg) {
+		dev_info(dev, "sg=%p in=%d out=%d\n", sg, in, out);
+		for(i = 0; i < out; i++) {
+			dev_info(dev, "out sg[%d].page_link=%p\n", i, sg[i].page_link);
+			dev_info(dev, "out sg[%d].offset=%u\n", i, sg[i].offset);
+			dev_info(dev, "out sg[%d].length=%u\n", i, sg[i].length);
+			dev_info(dev, "out sg[%d].dma_addr=%p\n", i, sg[i].dma_address);
+		}
+		for(; i < out + in; i++){
+			dev_info(dev, "in sg[%d].page_link=%p\n", i, sg[i].page_link);
+			dev_info(dev, "in sg[%d].offset=%u\n", i, sg[i].offset);
+			dev_info(dev, "in sg[%d].length=%u\n", i, sg[i].length);
+			dev_info(dev, "in sg[%d].dma_addr=%p\n", i, sg[i].dma_address);
+		}
+	}
+	if(iov) {
+		for(i = 0; i < iov_count; i++)
+			dev_info(dev, "iov[%d]=%p len=%u\n", i, iov[i].iov_base,
+					iov[i].iov_len);
+	}
+}
 
 /* How many bytes left in this page. */
 static unsigned int rest_of_page(void *data)
@@ -910,23 +944,28 @@ static int rpmsg_pack_sg_list(struct scatterlist *sg, int start,
 	return index - start;
 }
 
-void rpmsg_sg_init(struct scatterlist sg[], struct rpmsg_req *req, int *out,
+void rpmsg_sg_init(struct scatterlist **sg, struct rpmsg_req *req, int *out,
 			int *in)
 {
 	struct virtproc_info *vrp = req->priv;
 	int start = 0;
 
-	*out = rpmsg_pack_sg_list(vrp->sg, 0, RPMSG_VAR_VIRTQUEUE_NUM,
+	*out = rpmsg_pack_sg_list(req->sg, 0, RPMSG_VAR_VIRTQUEUE_NUM,
 			req->ksend.data, req->ksend.len);
 
-	*in = rpmsg_pack_sg_list(vrp->sg, *out, RPMSG_VAR_VIRTQUEUE_NUM,
+	*in = rpmsg_pack_sg_list(req->sg, *out, RPMSG_VAR_VIRTQUEUE_NUM,
 			req->krecv.data, req->krecv.len);
-	sg = vrp->sg;
+	*sg = req->sg;
 }
 
-unsigned short *rpmsg_get_buf(unsigned size, unsigned short ptype)
+void rpmsg_free_buf(void *data, unsigned char ptype)
 {
-	unsigned short *data = 0;
+	kfree(data);
+}
+
+void *rpmsg_get_buf(unsigned size, unsigned char ptype)
+{
+	void *data = 0;
 
 	data = kzalloc(size, GFP_KERNEL);
 	if(!data)
@@ -939,7 +978,7 @@ struct rpmsg_req *rpmsg_alloc_var_size_request(struct virtproc_info *vrp,
 		void *sdata, unsigned int slen, void *rdata, unsigned int rlen)
 {
 	struct rpmsg_req *req;
-	unsigned short ptype = 0;
+	unsigned char ptype = 0;
 
 	req = kzalloc(sizeof(*req), GFP_KERNEL);
 	if (!req)
@@ -952,16 +991,32 @@ struct rpmsg_req *rpmsg_alloc_var_size_request(struct virtproc_info *vrp,
 	req->urecv.data = rdata;
 
 	req->ksend.data = rpmsg_get_buf(slen + sizeof(struct rpmsg_hdr), ptype);
+	if(!req->ksend.data) {
+		dev_err(&vrp->vdev->dev, "Variable size ksend alloc failed\n");
+		goto free_request;
+	}
 	req->ksend.len = slen + sizeof(struct rpmsg_hdr);
 	req->krecv.data = rpmsg_get_buf(rlen + sizeof(struct rpmsg_hdr), ptype);
+	if(!req->krecv.data) {
+		dev_err(&vrp->vdev->dev, "Variable size krecv alloc failed\n");
+		goto free_ksend;
+	}
 	req->krecv.len = rlen + sizeof(struct rpmsg_hdr);
-
+	sg_init_table(req->sg, RPMSG_VAR_VIRTQUEUE_NUM);
 	return req;
+
+free_ksend: rpmsg_free_buf(req->ksend.data, ptype);
+free_request: kfree(req);
 }
 
+/*
+ * TODO
+ * 1. Add code for input validation.
+ * 2. Support for send alone, ie. rdata and rlen are NULL & 0
+ */
 int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, unsigned long src,
 			unsigned long dst, void *sdata, unsigned int slen,
-			void *rdata, unsigned int rlen)
+			void *rdata, unsigned int rlen, bool wait)
 {
 	struct virtproc_info *vrp = rpdev->vrp;
 	struct device *dev = &rpdev->dev;
@@ -969,6 +1024,9 @@ int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, unsigned long src,
 	struct rpmsg_hdr *msg;
 	struct rpmsg_req *req;
 	int err, in, out;
+
+	/* No support for wait and retry in case of resource unavailability */
+	wait = false;
 
 	if (src == RPMSG_ADDR_ANY || dst == RPMSG_ADDR_ANY) {
 		dev_err(dev, "invalid addr (src 0x%x, dst 0x%x)\n", src, dst);
@@ -988,22 +1046,25 @@ int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, unsigned long src,
 	msg->reserved = 0;
 	memcpy(msg->data, sdata, slen);
 
-	dev_dbg(dev, "TX From 0x%x, To 0x%x, Len %d, Flags %d, Reserved %d\n",
+	dev_info(dev, "TX From 0x%x, To 0x%x, Len %d, Flags %d, Reserved %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio TX: ", DUMP_PREFIX_NONE, 16, 1,
 					msg, sizeof(*msg) + msg->len, true);
 
-	rpmsg_sg_init(sg, req, &out, &in);
+	rpmsg_sg_init(&sg, req, &out, &in);
+
+	__debug_dump_rpmsg_req(vrp, req, sg, in, out, NULL, 0);
 
 	mutex_lock(&vrp->tx_lock);
+
 	/* add message to the remote processor's variable size virtqueue */
 	err = virtqueue_add_buf_gfp(vrp->vvq, sg, out, in, req, GFP_KERNEL);
-	if (err) {
+	if (err < 0) {
 		dev_err(dev, "virtqueue_add_buf_gfp failed: %d\n", err);
 		goto out;
 	}
-
+	err = 0;
 	/* tell the remote processor it has a pending message to read */
 	virtqueue_kick(vrp->vvq);
 out:
@@ -1071,6 +1132,9 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 		dev_err(dev, "failed to add a virtqueue buffer: %d\n", err);
 		return err;
 	}
+
+	WARN_ON(err < 0); /* sanity check; this can't really happen */
+
 	return 0;
 }
 
@@ -1115,30 +1179,35 @@ static void rpmsg_virtio_var_size_recv_work(struct work_struct *work)
 	struct iovec viov[2];
 	u16 idx;
 
-	idx = virtqueue_get_avail_buf(vrp->svq, &in, &out, piov,
+	memset(piov, 0, (sizeof(*piov) * ARRAY_SIZE(piov)));
+	memset(viov, 0, (sizeof(*viov) * ARRAY_SIZE(viov)));
+
+	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, piov, ARRAY_SIZE(piov));
+	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, viov, ARRAY_SIZE(viov));
+
+	idx = virtqueue_get_avail_buf(vrp->vvq, &in, &out, piov,
 		       					ARRAY_SIZE(piov));
+
+	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, piov, ARRAY_SIZE(piov));
+
 	if(idx < 0) {
-		printk(KERN_INFO "virtqueue_get_avail_buf failed\n");
+		dev_err(&vrp->vdev->dev, "virtqueue_get_avail_buf failed\n");
 		return NULL;
 	}
-
-	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d piov %p len %lu\n",
-			__func__,vrp->svq, in, out, piov[0].iov_base,
-			piov[0].iov_len);
 
 	ret = rpmsg_phy_to_virt_iov(piov, viov, ARRAY_SIZE(piov), false);
 	if(ret < 0) {
 		printk(KERN_INFO "rpmsg_phy_to_virt_iov failed\n");
 		return NULL;
 	}
-	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d viov %p len %lu\n",
-			__func__,vrp->svq, in, out, viov[0].iov_base,
-			viov[0].iov_len);
+	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, viov, ARRAY_SIZE(viov));
+
+	ret = virtqueue_update_used_idx(vrp->vvq, idx, viov[1].iov_len);
 }
 
 static void rpmsg_virtio_var_size_recv(struct virtproc_info *vrp)
 {
-	queue_work(rpmsg_virtio_var_size_recv_work, &vrp->var_size_recv_work);
+	queue_work(rpmsg_virtio_rcv_wq, &vrp->var_size_recv_work);
 }
 
 void rpmsg_recv_var_done(struct virtqueue *vvq)
@@ -1151,7 +1220,6 @@ void rpmsg_recv_var_done(struct virtqueue *vvq)
 	} else
 		rpmsg_virtio_var_size_recv(vrp);
 }
-
 
 /*
  * This is invoked whenever the remote processor completed processing

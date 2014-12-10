@@ -176,6 +176,9 @@ struct rpmsg_endpoint *rpmsg_create_ept(struct rpmsg_channel *,
 				rpmsg_rx_cb_t cb, void *priv, unsigned long addr);
 int
 rpmsg_send_offchannel_raw(struct rpmsg_channel *, unsigned long, unsigned long, void *, int, bool);
+int
+rpmsg_send_recv_raw(struct rpmsg_channel *, unsigned long, unsigned long, void *,
+			unsigned int, void *, unsigned int, bool);
 
 /**
  * rpmsg_send() - send a message across to the remote processor
@@ -327,6 +330,34 @@ rpmsg_trysend_offchannel(struct rpmsg_channel *rpdev, unsigned long src,
 			 unsigned long dst, void *data, int len)
 {
 	return rpmsg_send_offchannel_raw(rpdev, src, dst, data, len, false);
+}
+
+/**
+ * rpmsg_send_recv() - send a variable size message of size slen across to the
+ * remote processor and sets up a recv buffer of size rlen for the processor's
+ * reply. Once the reply arrives, it will be available in the rdata.
+ * @rpdev: the rpmsg channel
+ * @sdata: payload of message to be send
+ * @slen: length of payload
+ * @rdata: recv buffer for reply from remote processor
+ * @rlen: length of payload
+ *
+ * This function sends a variable size message of size slen across to the
+ * remote processor and sets up a recv buffer of size rlen for the processor's
+ * reply. Once the reply arrives, it will be available in the rdata and will be
+ * notified to the sender via callback
+ *
+ * Can only be called from process context (for now).
+ *
+ * Returns 0 on success and an appropriate error value on failure.
+ */
+static inline int rpmsg_send_recv(struct rpmsg_channel *rpdev, void *sdata,
+		int slen, void *rdata, int rlen)
+{
+	unsigned long src = rpdev->src, dst = rpdev->dst;
+
+	return rpmsg_send_recv_raw(rpdev, src, dst, sdata, slen, rdata, rlen,
+			false);
 }
 
 #endif /* _LINUX_RPMSG_H */

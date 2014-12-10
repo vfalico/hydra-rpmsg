@@ -22,7 +22,10 @@
 #include <linux/rpmsg.h>
 
 #define MSG		"hello world!"
-#define MSG_LIMIT	2000
+#define MSG_LIMIT	1
+#define RLEN		100
+
+char rbuf[RLEN];
 
 static void rpmsg_sample_cb(struct rpmsg_channel *rpdev, void *data, int len,
 						void *priv, u32 src)
@@ -55,7 +58,7 @@ static int rpmsg_sample_probe(struct rpmsg_channel *rpdev)
 					rpdev->src, rpdev->dst);
 
 	/* send a message to our remote processor */
-	ret = rpmsg_send(rpdev, MSG, strlen(MSG));
+	ret = rpmsg_send_recv(rpdev, MSG, strlen(MSG), rbuf, RLEN);
 	if (ret) {
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
 		return ret;
