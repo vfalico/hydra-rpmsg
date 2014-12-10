@@ -913,7 +913,7 @@ static unsigned __next_desc(struct vring_desc *desc)
 	return next;
 }
 
-static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
+static int __translate_desc(u64 addr, u32 len, struct iovec iov[])
 {
 	struct iovec *_iov;
 
@@ -925,7 +925,7 @@ static int __translate_desc(u64 addr, u32 len, struct iovec iov[], int iov_size)
 	_iov->iov_base = addr;
 	_iov->iov_len  = len;
 
-	return 0;
+	return 1;
 }
 
 int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
@@ -938,10 +938,8 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
 	u16 avail_idx;
 
 	avail_idx = vq->vring.avail->idx;
-#if 0
 	printk(KERN_DEBUG "%s: vq %s avail_idx %u vq->last_avail_idx %u\n",
 			__func__, _vq->name, avail_idx, vq->last_avail_idx);
-#endif
 	if(vq->vring.avail->idx == vq->last_avail_idx) {
 		//TODO: we may need to wait and re-check
 		printk(KERN_ERR "%s:dummy_rpmsg: no avail buffers\n",__func__);
@@ -958,14 +956,12 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
 		iov_count = *in + *out;
 		desc = &vq->vring.desc[i];
 
-		ret = __translate_desc(desc->addr, desc->len, iov + iov_count,
-				iov_size - iov_count);
+		ret = __translate_desc(desc->addr, desc->len, iov + iov_count);
 		if(unlikely(ret < 0)) {
 			printk(KERN_ERR "Translation failure %d"
 					"desc idx %d\n",ret, i);
 			return ret;
 		}
-
 		if(desc->flags & VRING_DESC_F_WRITE)
 			*in += ret;
 		else {
@@ -993,12 +989,9 @@ int virtqueue_update_used_idx(struct virtqueue *_vq, u16 used_idx, int len)
 	used->id = used_idx;
 	used->len = len;
 	vq->vring.used->idx = vq->last_used_idx + 1;
-#if 0
 	printk(KERN_DEBUG "%s: %s used_idx %u len %d vq->vring.used->idx %d\n",
 			__func__, _vq->name, used_idx, len, vq->vring.used->idx);
-#endif
 	vq->last_used_idx++;
-
 	return 0;
 }
 EXPORT_SYMBOL_GPL(virtqueue_update_used_idx);

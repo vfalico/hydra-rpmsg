@@ -597,11 +597,15 @@ int rpmsg_phy_to_virt_iov(struct iovec piov[], struct iovec viov[],
 				: ioremap_cache(piov[i].iov_base,
 					piov[i].iov_len));
 		if(!viov[i].iov_base || viov[i].iov_base < 0) {
-			printk(KERN_ERR "%s failed\n",(ptov ? "phys_to_virt" :
-						"ioremap_cache"));
+			printk(KERN_ERR "%s failed on piov[%d]=%p\n",
+				(ptov ? "phys_to_virt" :"ioremap_cache"),
+				i, piov[i].iov_base);
 			return -1U;
 		}
 		viov[i].iov_len = piov[i].iov_len;
+		printk(KERN_INFO "%s success piov[%d]=%p viov[%d]=%p\n",
+				(ptov ? "phys_to_virt" :"ioremap_cache"),
+				i, piov[i].iov_base, i, viov[i].iov_base);
 	}
 	return 0;
 }
@@ -630,24 +634,17 @@ static void *get_a_fixed_size_tx_buf(struct virtproc_info *vrp, u16 *idx)
 	/* support multiple concurrent senders */
 
 	*idx = virtqueue_get_avail_buf(vrp->svq, &in, &out, piov,
-		       	ARRAY_SIZE(piov));
+							ARRAY_SIZE(piov));
 	if(*idx < 0) {
 		printk(KERN_INFO "virtqueue_get_avail_buf failed\n");
 		return NULL;
 	}
-
-	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d piov %p len %lu\n",
-			__func__,vrp->svq, in, out, piov[0].iov_base,
-			piov[0].iov_len);
 
 	ret = rpmsg_phy_to_virt_iov(piov, viov, ARRAY_SIZE(piov), ptov);
 	if(ret < 0) {
 		printk(KERN_INFO "rpmsg_phy_to_virt_iov failed\n");
 		return NULL;
 	}
-	dev_dbg(&vrp->vdev->dev,"%s: svq %p in %d out %d viov %p len %lu\n",
-			__func__,vrp->svq, in, out, viov[0].iov_base,
-			viov[0].iov_len);
 	return viov[0].iov_base;
 }
 
@@ -1182,14 +1179,8 @@ static void rpmsg_virtio_var_size_recv_work(struct work_struct *work)
 	memset(piov, 0, (sizeof(*piov) * ARRAY_SIZE(piov)));
 	memset(viov, 0, (sizeof(*viov) * ARRAY_SIZE(viov)));
 
-	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, piov, ARRAY_SIZE(piov));
-	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, viov, ARRAY_SIZE(viov));
-
 	idx = virtqueue_get_avail_buf(vrp->vvq, &in, &out, piov,
 		       					ARRAY_SIZE(piov));
-
-	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, piov, ARRAY_SIZE(piov));
-
 	if(idx < 0) {
 		dev_err(&vrp->vdev->dev, "virtqueue_get_avail_buf failed\n");
 		return NULL;
@@ -1198,11 +1189,11 @@ static void rpmsg_virtio_var_size_recv_work(struct work_struct *work)
 	ret = rpmsg_phy_to_virt_iov(piov, viov, ARRAY_SIZE(piov), false);
 	if(ret < 0) {
 		printk(KERN_INFO "rpmsg_phy_to_virt_iov failed\n");
-		return NULL;
+		return;
 	}
-	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, viov, ARRAY_SIZE(viov));
 
 	ret = virtqueue_update_used_idx(vrp->vvq, idx, viov[1].iov_len);
+	virtqueue_kick(vrp->vvq);
 }
 
 static void rpmsg_virtio_var_size_recv(struct virtproc_info *vrp)
