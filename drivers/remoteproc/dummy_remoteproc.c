@@ -58,7 +58,7 @@ int boot_timeout = 5;
 module_param(boot_timeout, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(boot_timeout, "up to how many seconds to wait for the AP boot (default 5).");
 
-int serial_number = -1;
+int serial_number = 1;
 module_param(serial_number, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(serial_number, "set up serial console number to use (default - no serial output)");
 
