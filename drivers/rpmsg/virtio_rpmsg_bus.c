@@ -1327,6 +1327,7 @@ static void rpmsg_dummy_ap_var_size_recv_work(struct virtproc_info *vrp)
 	struct iovec piov[2];
 	struct iovec viov[2];
 	unsigned int len;
+	static int junk;
 	u16 idx;
 
 	memset(piov, 0, (sizeof(*piov) * ARRAY_SIZE(piov)));
@@ -1345,10 +1346,13 @@ static void rpmsg_dummy_ap_var_size_recv_work(struct virtproc_info *vrp)
 		return;
 	}
 
-	BUG_ON(ret != out + in);
-
 	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, viov, ARRAY_SIZE(viov));
+	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, piov, ARRAY_SIZE(piov));
 
+	if(junk++)
+		return;
+
+	BUG_ON(ret != out + in);
 	len = rpmsg_dummy_var_reply(viov, in, out);
 
 	ret = virtqueue_update_used_idx(vrp->vvq, idx, len);
