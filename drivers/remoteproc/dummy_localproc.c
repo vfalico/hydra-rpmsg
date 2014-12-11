@@ -118,8 +118,11 @@ int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_param
 	*(unsigned long *)TRAMPOLINE_SYM_BSP(&kernel_phys_addr) = (unsigned long)start_addr;
 	*(unsigned long *)TRAMPOLINE_SYM_BSP(&boot_params_phys_addr) = __pa(boot_params);
 
-	start_ip = __pa(TRAMPOLINE_SYM_BSP(trampoline_data_bsp));
+	start_ip = __pa(TRAMPOLINE_SYM_BSP(trampoline_data_bsp)) + 0xa000;
 	BUG_ON(!IS_ALIGNED(start_ip, PAGE_SIZE));
+
+	printk(KERN_INFO "%s: booting on cpu %d, start_addr %lu, start_ip %lu\n",
+	       __func__, boot_cpu, (unsigned long)start_addr, start_ip);
 
 	smpboot_setup_warm_reset_vector(start_ip);
 
@@ -264,6 +267,7 @@ static void __init dummy_lproc_setup_trampoline(void)
 	       x86_trampoline_bsp_base, (unsigned long long)mem, size);
 
 	memcpy(x86_trampoline_bsp_base, x86_trampoline_bsp_start, size);
+	set_memory_x((unsigned long)x86_trampoline_bsp_base, size >> PAGE_SHIFT);
 }
 
 static int __init dummy_lproc_init(void)
