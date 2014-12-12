@@ -897,18 +897,16 @@ void __debug_dump_rpmsg_req(struct virtproc_info *vrp, struct rpmsg_req *req,
 			dev_info(dev, "out sg[%d].page_link=%p\n", i, sg[i].page_link);
 			dev_info(dev, "out sg[%d].offset=%u\n", i, sg[i].offset);
 			dev_info(dev, "out sg[%d].length=%u\n", i, sg[i].length);
-			dev_info(dev, "out sg[%d].dma_addr=%p\n", i, sg[i].dma_address);
 		}
 		for(; i < out + in; i++){
 			dev_info(dev, "in sg[%d].page_link=%p\n", i, sg[i].page_link);
 			dev_info(dev, "in sg[%d].offset=%u\n", i, sg[i].offset);
 			dev_info(dev, "in sg[%d].length=%u\n", i, sg[i].length);
-			dev_info(dev, "in sg[%d].dma_addr=%p\n", i, sg[i].dma_address);
 		}
 	}
 	if(iov) {
 		for(i = 0; i < iov_count; i++){
-			dev_info(dev, "&iov=%p iov[%d]=%p len=%u\n",&iov[i], i,
+			dev_info(dev, "iov=%p iov[%d]=%p len=%u\n",&iov[i], i,
 					iov[i].iov_base, iov[i].iov_len);
 			}
 		}
@@ -1087,7 +1085,7 @@ int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, unsigned long src,
 
 	rpmsg_sg_init(&sg, req, &out, &in);
 
-	__debug_dump_rpmsg_req(vrp, req, sg, in, out, NULL, 0);
+	__debug_dump_rpmsg_req(vrp, req, sg, out, in, NULL, 0);
 
 	mutex_lock(&vrp->tx_lock);
 
@@ -1327,7 +1325,6 @@ static void rpmsg_dummy_ap_var_size_recv_work(struct virtproc_info *vrp)
 	struct iovec piov[2];
 	struct iovec viov[2];
 	unsigned int len;
-	static int junk;
 	u16 idx;
 
 	memset(piov, 0, (sizeof(*piov) * ARRAY_SIZE(piov)));
@@ -1348,9 +1345,6 @@ static void rpmsg_dummy_ap_var_size_recv_work(struct virtproc_info *vrp)
 
 	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, viov, ARRAY_SIZE(viov));
 	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, piov, ARRAY_SIZE(piov));
-
-	if(junk++)
-		return;
 
 	BUG_ON(ret != out + in);
 	len = rpmsg_dummy_var_reply(viov, in, out);

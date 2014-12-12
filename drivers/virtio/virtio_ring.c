@@ -109,9 +109,62 @@ struct vring_virtqueue
  */
 void __debug_virtqueue(struct virtqueue *_vq, char *fmt);
 
+<<<<<<< HEAD
 
 static struct vring_desc *alloc_indirect(struct virtqueue *_vq,
 					 unsigned int total_sg, gfp_t gfp)
+=======
+void __debug_virtqueue(struct virtqueue *_vq, char *fmt)
+{
+	struct vring_virtqueue *vq = to_vvq(_vq);
+	struct vring_desc *desc;
+	int i,head,avail,used;
+
+	avail = vq->vring.avail->idx % vq->vring.num;
+	used = vq->vring.used->idx % vq->vring.num;
+
+	printk(KERN_INFO "%s:vq %p queue name %s\n",fmt, vq, _vq->name);
+	printk(KERN_INFO "used_desc stats:\n");
+	printk(KERN_INFO "\t\tring[%d].id=%u .len=%d vq.lst_usd_idx=%d "
+			"vring.usd.idx=%d\n",
+			used,vq->vring.used->ring[used].id,
+			vq->vring.used->ring[used].len,
+			vq->last_used_idx,vq->vring.used->idx);
+
+	printk(KERN_INFO "avail_desc stats:\n");
+	printk(KERN_INFO "\t\tring[%d]=%d lst_avl_idx=%d vring.avl.idx=%d\n",
+			avail,vq->vring.avail->ring[avail],
+			vq->hlast_avail_idx,vq->vring.avail->idx);
+
+	printk(KERN_INFO "virtqueue stats:\n");
+	printk(KERN_INFO "\t\tvq.num_free=%u vq.free_head=%u\n",
+			vq->num_free, vq->free_head);
+	printk(KERN_INFO "\t\tvq.num_added=%u vq.last_used_idx=%u\n",
+			vq->num_added,vq->last_used_idx);
+
+	head = vq->hlast_avail_idx % vq->vring.num;
+	desc = &vq->vring.desc[head];
+
+	printk(KERN_INFO "desc stats:\n");
+	printk(KERN_INFO "\t\thead=%d desc.addr=%p desc.len=%d\n",
+				head, desc->addr, desc->len);
+	if(strncmp(fmt,"debug_queue",11) == 0) {
+		for(i=0; i < vq->vring.num; i++) {
+			desc = &vq->vring.desc[i];
+			printk(KERN_INFO "\t\t[%3d].addr=%p .len=%d\n", i,
+					desc->addr, desc->len);
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(__debug_virtqueue);
+
+
+/* Set up an indirect table of descriptors and add it to the queue. */
+static int vring_add_indirect(struct vring_virtqueue *vq,
+			      struct scatterlist sg[],
+			      unsigned int out,
+			      unsigned int in,
+			      gfp_t gfp)
 {
 	struct vring_desc *desc;
 	unsigned int i;
@@ -388,6 +441,7 @@ bool virtqueue_kick_prepare(struct virtqueue *_vq)
 		needs_kick = !(vq->vring.used->flags & cpu_to_virtio16(_vq->vdev, VRING_USED_F_NO_NOTIFY));
 	}
 	END_USE(vq);
+<<<<<<< HEAD
 	return needs_kick;
 }
 EXPORT_SYMBOL_GPL(virtqueue_kick_prepare);
@@ -433,6 +487,9 @@ bool virtqueue_kick(struct virtqueue *vq)
 	if (virtqueue_kick_prepare(vq))
 		return virtqueue_notify(vq);
 	return true;
+	if(strncmp(_vq->name, "var", 3) == 0)
+		__debug_virtqueue(_vq, "dump after virtqueue_kick");
+
 }
 EXPORT_SYMBOL_GPL(virtqueue_kick);
 
@@ -466,6 +523,7 @@ static inline bool more_used(const struct vring_virtqueue *vq)
 	return vq->last_used_idx != virtio16_to_cpu(vq->vq.vdev, vq->vring.used->idx);
 }
 
+<<<<<<< HEAD
 void __debug_virtqueue(struct virtqueue *_vq, char *fmt)
 {
 	struct vring_virtqueue *vq = to_vvq(_vq);
@@ -953,7 +1011,7 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
 			__func__, _vq->name, avail_idx, vq->hlast_avail_idx);
 
 	if(strncmp(_vq->name, "var", 3) == 0)
-		__debug_virtqueue(_vq,"dump before get_avail_buf");
+		__debug_virtqueue(_vq, "dump before get_avail_buf");
 
 	if(vq->vring.avail->idx == vq->hlast_avail_idx) {
 		//TODO: we may need to wait and re-check
@@ -961,7 +1019,7 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
 		return -1U;
 	}
 
-	head = vq->hlast_avail_idx % vq->vring.num;
+	head = vq->vring.avail->ring[avail_idx % vq->vring.num];
 	BUG_ON(head > vq->vring.num);
 
 	i = head;
@@ -987,7 +1045,7 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
 	vq->hlast_avail_idx++;
 
 	if(strncmp(_vq->name, "var", 3) == 0)
-		__debug_virtqueue(_vq,"dump after get_avail_buf");
+		__debug_virtqueue(_vq, "dump after get_avail_buf");
 
 	return head;
 }
@@ -1020,14 +1078,14 @@ irqreturn_t vring_avail_interrupt(int irq, void *_vq)
 	struct vring_virtqueue *vq = to_vvq(_vq);
 
 	if (!more_avail(vq)) {
-		pr_debug("virtqueue interrupt with no work for %p\n", vq);
+		printk("virtqueue interrupt with no work for %p\n", vq);
 		return IRQ_NONE;
 	}
 
 	if (unlikely(vq->broken))
 		return IRQ_HANDLED;
 
-	pr_debug("virtqueue callback for %p (%p)\n", vq, vq->vq.callback);
+	printk("virtqueue callback for %p (%p)\n", vq, vq->vq.callback);
 	if (vq->vq.callback)
 		vq->vq.callback(&vq->vq);
 
