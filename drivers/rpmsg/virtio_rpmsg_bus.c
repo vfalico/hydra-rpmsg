@@ -36,6 +36,8 @@
 #include <linux/device.h>
 #include <linux/uio.h>
 
+#define	RPMSG_MAX_IOV_SIZE	32
+
 /**
  * struct virtproc_info - virtual remote processor state
  * @vdev:	the virtio device
@@ -75,6 +77,8 @@ struct virtproc_info {
 	struct rpmsg_endpoint *ns_ept;
 	struct work_struct config_work;
 	struct work_struct var_size_recv_work;
+	struct iovec piov[RPMSG_MAX_IOV_SIZE];
+	struct iovec viov[RPMSG_MAX_IOV_SIZE];
 };
 
 /**
@@ -587,34 +591,54 @@ static int rpmsg_destroy_channel(struct virtproc_info *vrp,
 	return 0;
 }
 
-int rpmsg_phy_to_virt_iov(struct iovec piov[], struct iovec viov[],
-				int iov_size, bool ptov)
+static int rpmsg_phy_to_virt_iov(struct virtproc_info *vrp, struct iovec piov[],
+				struct iovec viov[], int iov_size, bool ptov)
 {
 	int i;
+	struct device *dev = &vrp->vdev->dev;
+	resource_size_t phy;
+	__kernel_size_t len;
 
-	for(i=0; i < iov_size; i++) {
+	for(i = 0; i < iov_size; i++) {
 		if(!piov[i].iov_base)
 			break;
-		viov[i].iov_base = (ptov ? phys_to_virt(piov[i].iov_base)
-				: ioremap_cache(piov[i].iov_base,
-					piov[i].iov_len));
+		phy = (resource_size_t)piov[i].iov_base;
+		len = (__kernel_size_t)piov[i].iov_len;
+		viov[i].iov_base = ptov ? phys_to_virt(phy) :
+						ioremap_cache(phy, len);
 		if(!viov[i].iov_base || viov[i].iov_base < 0) {
-			printk(KERN_ERR "%s failed on piov[%d]=%p\n",
-				(ptov ? "phys_to_virt" :"ioremap_cache"),
-				i, piov[i].iov_base);
+			dev_err(dev, "%s failed on piov[%d] %p len=%u\n",
+					(ptov ? "phys_to_virt" :
+					"ioremap_cache"), i, (void *)phy,
+					(unsigned int)len);
 			return -1U;
 		}
 		viov[i].iov_len = piov[i].iov_len;
-		printk(KERN_INFO "%s success piov[%d]=%p viov[%d]=%p\n",
+		dev_dbg(dev, "%s success piov[%d]=%p viov[%d]=%p len=%u\n",
 				(ptov ? "phys_to_virt" :"ioremap_cache"),
-				i, piov[i].iov_base, i, viov[i].iov_base);
+				i, piov[i].iov_base, i, viov[i].iov_base,
+				(unsigned int)piov[i].iov_len);
 	}
 	return i;
 }
 
-extern int virtqueue_get_avail_buf(struct virtqueue *_vq, int *in, int *out,
+static int rpmsg_iounmap_iov(struct iovec iov[], int iov_size, bool ptov)
+{
+	int i;
+	for(i = 0; i < iov_size; i++) {
+		if(!iov[i].iov_base)
+			break;
+		if(!ptov)
+			iounmap(iov[i].iov_base);
+		else
+			continue;
+	}
+	return i;
+}
+
+extern int virtqueue_get_avail_buf(struct virtqueue *_vq, int *out, int *in,
 		struct iovec iov[], int iov_size);
-extern int virtqueue_update_used_idx(struct virtqueue *_vq, u16 used_idx, int len);
+extern void virtqueue_update_used_idx(struct virtqueue *_vq, u16 used_idx, int len);
 extern void __debug_virtqueue(struct virtqueue *_vq, char *fmt);
 
 /*
@@ -629,22 +653,22 @@ extern void __debug_virtqueue(struct virtqueue *_vq, char *fmt);
 static void *get_a_fixed_size_tx_buf(struct virtproc_info *vrp, u16 *idx)
 {
 	int in, out, ret;
-	struct iovec piov[1] = { piov[0].iov_base = 0, piov[0].iov_len = 0 };
-	struct iovec viov[1] = { viov[0].iov_base = 0, viov[0].iov_len = 0 };
+	struct iovec piov[1] = {{ piov[0].iov_base = 0, piov[0].iov_len = 0 }};
+	struct iovec viov[1] = {{ viov[0].iov_base = 0, viov[0].iov_len = 0 }};
 	bool ptov = vrp->sbufs ? true : false;
 
 	/* support multiple concurrent senders */
 
-	*idx = virtqueue_get_avail_buf(vrp->svq, &in, &out, piov,
+	*idx = virtqueue_get_avail_buf(vrp->svq, &out, &in, piov,
 							ARRAY_SIZE(piov));
 	if(*idx < 0) {
-		printk(KERN_INFO "virtqueue_get_avail_buf failed\n");
+		dev_err(&vrp->vdev->dev, "virtqueue_get_avail_buf failed\n");
 		return NULL;
 	}
 
-	ret = rpmsg_phy_to_virt_iov(piov, viov, ARRAY_SIZE(piov), ptov);
+	ret = rpmsg_phy_to_virt_iov(vrp, piov, viov, ARRAY_SIZE(piov), ptov);
 	if(ret < 0) {
-		printk(KERN_INFO "rpmsg_phy_to_virt_iov failed\n");
+		dev_err(&vrp->vdev->dev, "rpmsg_phy_to_virt_iov failed\n");
 		return NULL;
 	}
 	return viov[0].iov_base;
@@ -828,7 +852,6 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 #endif
 	sg_init_one(&sg, msg, sizeof(*msg) + len);
 
-	err = virtqueue_update_used_idx(vrp->svq, idx, len + (sizeof(*msg)));
 #if 0
 	/* add message to the remote processor's virtqueue */
 	err = virtqueue_add_outbuf(vrp->svq, &sg, 1, msg, GFP_KERNEL);
@@ -842,9 +865,8 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 		goto out;
 	}
 
-	/* tell the remote processor it has a pending message to read */
-	virtqueue_kick(vrp->svq);
 #endif
+	virtqueue_update_used_idx(vrp->svq, idx, len + (sizeof(*msg)));
 	mutex_unlock(&vrp->tx_lock);
 
 	/* tell the remote processor it has a pending message to read */
@@ -863,7 +885,7 @@ EXPORT_SYMBOL(rpmsg_send_offchannel_raw);
 
 struct rpmsg_var_msg {
 	u32 len;
-	u8 *data;
+	void *data;
 };
 
 struct rpmsg_req {
@@ -879,7 +901,7 @@ struct rpmsg_req {
 };
 
 void __debug_dump_rpmsg_req(struct virtproc_info *vrp, struct rpmsg_req *req,
-				struct scatterlist *sg, int in, int out,
+				struct scatterlist *sg, int out, int in,
 				struct iovec iov[],int iov_count)
 {
 	struct device *dev = &vrp->vdev->dev;
@@ -894,20 +916,22 @@ void __debug_dump_rpmsg_req(struct virtproc_info *vrp, struct rpmsg_req *req,
 	if(sg) {
 		dev_info(dev, "sg=%p in=%d out=%d\n", sg, in, out);
 		for(i = 0; i < out; i++) {
-			dev_info(dev, "out sg[%d].page_link=%p\n", i, sg[i].page_link);
+			dev_info(dev, "out sg[%d].page_link=%p\n", i,
+					(void *)sg[i].page_link);
 			dev_info(dev, "out sg[%d].offset=%u\n", i, sg[i].offset);
 			dev_info(dev, "out sg[%d].length=%u\n", i, sg[i].length);
 		}
-		for(; i < out + in; i++){
-			dev_info(dev, "in sg[%d].page_link=%p\n", i, sg[i].page_link);
+		for(; i < out + in; i++) {
+			dev_info(dev, "in sg[%d].page_link=%p\n", i,
+					(void *)(sg[i].page_link));
 			dev_info(dev, "in sg[%d].offset=%u\n", i, sg[i].offset);
 			dev_info(dev, "in sg[%d].length=%u\n", i, sg[i].length);
 		}
 	}
 	if(iov) {
 		for(i = 0; i < iov_count; i++){
-			dev_info(dev, "iov=%p iov[%d]=%p len=%u\n",&iov[i], i,
-					iov[i].iov_base, iov[i].iov_len);
+			dev_info(dev, "iov=%p iov[%d]=%p len=%d\n",&iov[i], i,
+					iov[i].iov_base,(int) iov[i].iov_len);
 			}
 		}
 }
@@ -973,9 +997,6 @@ static int rpmsg_pack_sg_list(struct scatterlist *sg, int start,
 void rpmsg_sg_init(struct scatterlist **sg, struct rpmsg_req *req, int *out,
 			int *in)
 {
-	struct virtproc_info *vrp = req->priv;
-	int start = 0;
-
 	*out = rpmsg_pack_sg_list(req->sg, 0, RPMSG_VAR_VIRTQUEUE_NUM,
 			req->ksend.data, req->ksend.len);
 
@@ -1039,10 +1060,15 @@ struct rpmsg_req *rpmsg_alloc_var_size_request(struct virtproc_info *vrp,
 	}
 	req->krecv.len = rlen + sizeof(struct rpmsg_hdr);
 	sg_init_table(req->sg, RPMSG_VAR_VIRTQUEUE_NUM);
+
 	return req;
 
-free_ksend: rpmsg_free_buf(req->ksend.data, ptype);
-free_request: kfree(req);
+free_ksend:
+	rpmsg_free_buf(req->ksend.data, ptype);
+free_request:
+	kfree(req);
+
+	return req;
 }
 
 /*
@@ -1065,7 +1091,7 @@ int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, unsigned long src,
 	wait = false;
 
 	if (src == RPMSG_ADDR_ANY || dst == RPMSG_ADDR_ANY) {
-		dev_err(dev, "invalid addr (src 0x%x, dst 0x%x)\n", src, dst);
+		dev_err(dev, "invalid addr (src 0x%lx, dst 0x%lx)\n", src, dst);
 		return -EINVAL;
 	}
 
@@ -1077,15 +1103,15 @@ int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, unsigned long src,
 
 	msg = rpmsg_copy_from_user(req);
 
-	dev_info(dev, "TX From 0x%x, To 0x%x, Len %d, Flags %d, Reserved %d\n",
+	dev_info(dev, "TX From 0x%lx, To 0x%lx, Len %d, Flags %d, Reserved %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
+#if 0
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio TX: ", DUMP_PREFIX_NONE, 16, 1,
 					msg, sizeof(*msg) + msg->len, true);
+#endif
 
 	rpmsg_sg_init(&sg, req, &out, &in);
-
-	__debug_dump_rpmsg_req(vrp, req, sg, out, in, NULL, 0);
 
 	mutex_lock(&vrp->tx_lock);
 
@@ -1205,18 +1231,13 @@ static int rpmsg_send_recv_single(struct virtproc_info *vrp, struct device *dev,
 			     struct rpmsg_req *req, unsigned int len)
 {
 	struct rpmsg_endpoint *ept;
-	struct scatterlist sg;
 	struct rpmsg_hdr *msg;
-	int err;
 
 	msg = rpmsg_copy_to_user(req, len);
 
 	dev_info(dev, "From: 0x%lx, To: 0x%lx, Len: %d, Flags: %d, Reserved: %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
-
-	print_hex_dump(KERN_DEBUG, "rpmsg_virtio RX: ", DUMP_PREFIX_NONE, 16, 1,
-					msg, sizeof(*msg) + msg->len, true);
 
 	if (msg->len > (len - sizeof(struct rpmsg_hdr))) {
 		dev_warn(dev, "inbound msg too big: (%d, %d)\n", len, msg->len);
@@ -1296,16 +1317,16 @@ static unsigned int rpmsg_dummy_calc_reply_len(struct iovec iov[], int iov_count
 	return len;
 }
 
-static int rpmsg_dummy_var_reply(struct iovec iov[], int in, int out)
+static int rpmsg_dummy_var_reply(struct iovec iov[], int out, int in)
 {
 	struct rpmsg_hdr *recv_msg = iov[0].iov_base;
-	struct rpmsg_hdr *reply_msg = iov[in].iov_base;
+	struct rpmsg_hdr *reply_msg = iov[out].iov_base;
 	static int reply_cnt;
 	unsigned int len;
 
-	BUG_ON(iov[in].iov_len < sizeof(struct rpmsg_hdr));
+	BUG_ON(iov[out].iov_len < sizeof(struct rpmsg_hdr));
 
-	len = rpmsg_dummy_calc_reply_len(iov + in, out);
+	len = rpmsg_dummy_calc_reply_len(iov + out, in);
 
 	reply_msg->len = len - sizeof(struct rpmsg_hdr);
 	reply_msg->flags = 0;
@@ -1322,36 +1343,34 @@ static void rpmsg_dummy_ap_var_size_recv_work(struct virtproc_info *vrp)
 {
 	struct device *dev = &vrp->vdev->dev;
 	int in, out, ret;
-	struct iovec piov[2];
-	struct iovec viov[2];
+	struct iovec *piov = vrp->piov;
+	struct iovec *viov = vrp->viov;
 	unsigned int len;
 	u16 idx;
 
-	memset(piov, 0, (sizeof(*piov) * ARRAY_SIZE(piov)));
-	memset(viov, 0, (sizeof(*viov) * ARRAY_SIZE(viov)));
-
-	idx = virtqueue_get_avail_buf(vrp->vvq, &in, &out, piov,
-		       					ARRAY_SIZE(piov));
+	idx = virtqueue_get_avail_buf(vrp->vvq, &out, &in, piov,
+							ARRAY_SIZE(vrp->piov));
 	if(idx < 0) {
 		dev_err(dev, "virtqueue_get_avail_buf failed\n");
-		return NULL;
+		return;
 	}
 
-	ret = rpmsg_phy_to_virt_iov(piov, viov, ARRAY_SIZE(piov), false);
+	ret = rpmsg_phy_to_virt_iov(vrp, piov, viov, out + in, false);
 	if(ret < 0) {
 		dev_err(dev, "rpmsg_phy_to_virt_iov failed\n");
 		return;
 	}
-
-	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, viov, ARRAY_SIZE(viov));
-	__debug_dump_rpmsg_req(vrp, NULL, NULL, 0, 0, piov, ARRAY_SIZE(piov));
-
 	BUG_ON(ret != out + in);
-	len = rpmsg_dummy_var_reply(viov, in, out);
 
-	ret = virtqueue_update_used_idx(vrp->vvq, idx, len);
+	len = rpmsg_dummy_var_reply(viov, out, in);
+	BUG_ON(len == 0);
+
+	virtqueue_update_used_idx(vrp->vvq, idx, len);
 
 	virtqueue_kick(vrp->vvq);
+
+	ret = rpmsg_iounmap_iov(viov, out + in, false);
+	BUG_ON(ret != out + in);
 }
 
 static void rpmsg_virtio_var_size_msg_work(struct work_struct *work)
@@ -1434,18 +1453,19 @@ static int rpmsg_map_remote_bufs(struct virtproc_info *vrp)
 	if(unlikely(!desc.addr || !desc.len))
 		return -1U;
 
-	printk(KERN_DEBUG "%s:ioremap rpsmg fixed size buffer pool"
-			" phy %p len %u\n", __func__, desc.addr, desc.len);
 	va = ioremap_cache(desc.addr, desc.len);
 	if(!va) {
-		printk(KERN_ERR "iormap_cache failed\n");
+		dev_err(&vrp->vdev->dev, "%s: ioremap_cache failed! phy %p"
+				" len %u\n",__func__, (void *)desc.addr,
+				desc.len);
 		return -1U;
 	}
-	printk(KERN_DEBUG "%s:ioremap rpmsg fixed size buffer pool"
-			" done virt %p len %u\n",__func__, va, desc.len);
 
+	dev_dbg(&vrp->vdev->dev, "%s: ioremap_cache sucess! phy %p virt %p"
+			" len %u\n",__func__, (void *)desc.addr, va, desc.len);
 	BUG_ON(desc.len != RPMSG_TOTAL_BUF_SPACE);
 	vrp->sbufs = va;
+	return 0;
 }
 
 /*
@@ -1472,9 +1492,8 @@ static void rpmsg_setup_recv_buf(struct virtproc_info *vrp, unsigned len)
 		vdev->config->set(vdev, offset, (void *)&desc,
 				 sizeof(struct fw_rsc_vdev_sbuf_desc));
 	}
-
-	printk(KERN_DEBUG "%s:set rpsmg fixed size buffer pool addr"
-			" phy %p len %u\n", __func__, desc.addr, desc.len);
+	dev_dbg(&vrp->vdev->dev,"%s: fixed size rx pool phy %p len %u\n",
+			__func__,(void *) desc.addr, desc.len);
 }
 
 /*
@@ -1731,8 +1750,6 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	/* tell the remote processor it can start sending messages */
 	virtqueue_kick(vrp->rvq);
 
-	__debug_virtqueue(vrp->rvq,"initial replenish & kick");
-
 	dev_info(&vdev->dev, "rpmsg %s is online\n",((is_bsp) ? "host":"lproc"));
 
 	rpmsg_setup_recv_buf(vrp, RPMSG_TOTAL_BUF_SPACE);
@@ -1812,7 +1829,7 @@ static struct virtio_driver virtio_ipc_driver = {
 
 static int __init rpmsg_init(void)
 {
-	int ret;
+	int ret = 0;
 
 	rpmsg_virtio_cfg_wq = alloc_workqueue("virtio-rpmsg-cfg", 0, 0);
 	if (!rpmsg_virtio_cfg_wq)

@@ -22,10 +22,13 @@
 #include <linux/rpmsg.h>
 
 #define MSG		"hello world!"
-#define MSG_LIMIT	3
-#define RLEN		100
+#define MSG_LIMIT	200
 
-char rbuf[RLEN];
+#define RLEN		8192
+#define SLEN		(8192 * 2)
+
+char *rbuf;
+char *tbuf;
 
 static void rpmsg_sample_cb(struct rpmsg_channel *rpdev, void *data, int len,
 						void *priv, u32 src)
@@ -33,19 +36,24 @@ static void rpmsg_sample_cb(struct rpmsg_channel *rpdev, void *data, int len,
 	int ret;
 	static int rx_count;
 
-	dev_info(&rpdev->dev, "incoming msg %d (src: 0x%x)\n", ++rx_count, src);
-
+	dev_info(&rpdev->dev, "incoming msg %d (src: 0x%x len%d)\n", ++rx_count, src, len);
+#if 0
 	print_hex_dump(KERN_DEBUG, __func__, DUMP_PREFIX_NONE, 16, 1,
 		       data, len,  true);
 
+#endif
 	/* samples should not live forever */
 	if (rx_count >= MSG_LIMIT) {
 		dev_info(&rpdev->dev, "goodbye!\n");
+		vfree(rbuf);
+		vfree(tbuf);
 		return;
 	}
 
 	/* send a new message now */
-	ret = rpmsg_send_recv(rpdev, MSG, strlen(MSG), rbuf, RLEN);
+	//ret = rpmsg_send_recv(rpdev, MSG, strlen(MSG), rbuf, RLEN);
+	ret = rpmsg_send_recv(rpdev, tbuf, SLEN, rbuf, RLEN);
+	//ret = rpmsg_send(rpdev, MSG, strlen(MSG));
 	if (ret)
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
 }
@@ -53,12 +61,15 @@ static void rpmsg_sample_cb(struct rpmsg_channel *rpdev, void *data, int len,
 static int rpmsg_sample_probe(struct rpmsg_channel *rpdev)
 {
 	int ret;
+	rbuf = vmalloc(RLEN);
+	tbuf = vmalloc(SLEN);
 
 	dev_info(&rpdev->dev, "new channel: 0x%x -> 0x%x!\n",
 					rpdev->src, rpdev->dst);
 
 	/* send a message to our remote processor */
-	ret = rpmsg_send_recv(rpdev, MSG, strlen(MSG), rbuf, RLEN);
+	ret = rpmsg_send_recv(rpdev, tbuf, SLEN, rbuf, RLEN);
+	//ret = rpmsg_send(rpdev, MSG, strlen(MSG));
 	if (ret) {
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
 		return ret;
