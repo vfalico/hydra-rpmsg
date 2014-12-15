@@ -988,7 +988,7 @@ void virtqueue_update_used_idx(struct virtqueue *_vq, u16 used_idx, int len)
 	used->id = used_idx;
 	used->len = len;
 	vq->vring.used->idx = vq->hlast_used_idx + 1;
-	pr_debug(KERN_DEBUG "%s: %s used_idx %u len %d vring.used->idx %d\n",
+	pr_debug("%s: %s used_idx %u len %d vring.used->idx %d\n",
 			__func__, _vq->name, used_idx, len, vq->vring.used->idx);
 	vq->hlast_used_idx++;
 }
@@ -999,7 +999,7 @@ irqreturn_t vring_avail_interrupt(int irq, void *_vq)
 	struct vring_virtqueue *vq = to_vvq(_vq);
 
 	if (!more_avail(vq)) {
-		pr_debug(KERN_DEBUG "virtqueue interrupt with no work for %p\n", vq);
+		pr_debug("virtqueue interrupt with no work for %p\n", vq);
 		return IRQ_NONE;
 	}
 

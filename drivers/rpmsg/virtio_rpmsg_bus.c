@@ -657,8 +657,6 @@ static void *get_a_fixed_size_tx_buf(struct virtproc_info *vrp, u16 *idx)
 	struct iovec viov[1] = {{ viov[0].iov_base = 0, viov[0].iov_len = 0 }};
 	bool ptov = vrp->sbufs ? true : false;
 
-	/* support multiple concurrent senders */
-
 	*idx = virtqueue_get_avail_buf(vrp->svq, &out, &in, piov,
 							ARRAY_SIZE(piov));
 	if(*idx < 0) {
@@ -1071,6 +1069,7 @@ free_request:
 	return req;
 }
 
+#define MAX_BUF_SIZE	(64 * 1024)
 /*
  * TODO
  * 1. Add code for input validation.
@@ -1092,6 +1091,13 @@ int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, unsigned long src,
 
 	if (src == RPMSG_ADDR_ANY || dst == RPMSG_ADDR_ANY) {
 		dev_err(dev, "invalid addr (src 0x%lx, dst 0x%lx)\n", src, dst);
+		return -EINVAL;
+	}
+	/* Trivially validate input */
+	if (!sdata || !rdata || slen == 0 || rlen == 0 || slen > MAX_BUF_SIZE
+			|| rlen > MAX_BUF_SIZE) {
+		dev_err(dev, "Invalid input sdata %p rdata %p slen %u rlen %u",
+				sdata, rdata, slen, rlen);
 		return -EINVAL;
 	}
 
@@ -1401,7 +1407,7 @@ static void rpmsg_xmit_done(struct virtqueue *svq)
 {
 	struct virtproc_info *vrp = svq->vdev->priv;
 
-	dev_info(&svq->vdev->dev, "%s\n", __func__);
+	dev_info(&svq->vdev->dev, "%s vq: %s\n", __func__, svq->name);
 
 	/* wake up potential senders that are waiting for a tx buffer */
 	wake_up_interruptible(&vrp->sendq);
