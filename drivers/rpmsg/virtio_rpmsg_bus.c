@@ -1418,18 +1418,18 @@ static void rpmsg_xmit_done(struct virtqueue *svq)
  * 1. We need to seperate rproc and lproc by cacheline size.
  * 2. Move this defenitions to remoteproc.h
  * 3. Take care of endianness.
- * 4. Write unnap routines.
+ * 4. Write unmap routines.
  * 5. What if multiple name service messages comes from same remote processor?
  *
  */
-struct fw_rsc_vdev_sbuf_desc{
+struct fw_rsc_vdev_buf_desc{
 	unsigned long addr;
 	u32 len;
 } __packed;
 
 struct fw_rsc_vdev_config {
-	struct fw_rsc_vdev_sbuf_desc rproc_desc;
-	struct fw_rsc_vdev_sbuf_desc lproc_desc;
+	struct fw_rsc_vdev_buf_desc rproc_desc;
+	struct fw_rsc_vdev_buf_desc lproc_desc;
 } __packed;
 
 #define RSC_VDEV_CONFIG_SIZE	(sizeof(fw_rsc_vdev_config))
@@ -1438,22 +1438,22 @@ struct fw_rsc_vdev_config {
 static int rpmsg_map_remote_bufs(struct virtproc_info *vrp)
 {
 	struct virtio_device *vdev = vrp->vdev;
-	struct fw_rsc_vdev_sbuf_desc desc;
+	struct fw_rsc_vdev_buf_desc desc;
 	unsigned offset;
 	void *va;
 
 	BUG_ON(vrp->sbufs != 0);
 
-	memset(&desc, 0, sizeof(struct fw_rsc_vdev_sbuf_desc));
+	memset(&desc, 0, sizeof(struct fw_rsc_vdev_buf_desc));
 
 	if(is_bsp) {
 		offset = offsetof(struct fw_rsc_vdev_config, lproc_desc);
 		vdev->config->get(vdev, offset, (void *)&desc,
-				 sizeof(struct fw_rsc_vdev_sbuf_desc));
+				 sizeof(struct fw_rsc_vdev_buf_desc));
 	} else {
 		offset = offsetof(struct fw_rsc_vdev_config, rproc_desc);
 		vdev->config->get(vdev, offset, (void *)&desc,
-				 sizeof(struct fw_rsc_vdev_sbuf_desc));
+				 sizeof(struct fw_rsc_vdev_buf_desc));
 	}
 
 	if(unlikely(!desc.addr || !desc.len))
@@ -1480,7 +1480,7 @@ static int rpmsg_map_remote_bufs(struct virtproc_info *vrp)
 static void rpmsg_setup_recv_buf(struct virtproc_info *vrp, unsigned len)
 {
 	struct virtio_device *vdev = vrp->vdev;
-	struct fw_rsc_vdev_sbuf_desc desc;
+	struct fw_rsc_vdev_buf_desc desc;
 	unsigned offset;
 
 	desc.addr = (unsigned long)vrp->bufs_dma;
@@ -1492,11 +1492,11 @@ static void rpmsg_setup_recv_buf(struct virtproc_info *vrp, unsigned len)
 	if(is_bsp) {
 		offset = offsetof(struct fw_rsc_vdev_config, rproc_desc);
 		vdev->config->set(vdev, offset, (void *)&desc,
-				 sizeof(struct fw_rsc_vdev_sbuf_desc));
+				 sizeof(struct fw_rsc_vdev_buf_desc));
 	} else {
 		offset = offsetof(struct fw_rsc_vdev_config, lproc_desc);
 		vdev->config->set(vdev, offset, (void *)&desc,
-				 sizeof(struct fw_rsc_vdev_sbuf_desc));
+				 sizeof(struct fw_rsc_vdev_buf_desc));
 	}
 	dev_dbg(&vrp->vdev->dev,"%s: fixed size rx pool phy %p len %u\n",
 			__func__,(void *) desc.addr, desc.len);
