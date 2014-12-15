@@ -117,11 +117,14 @@ int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_param
 
 	*(unsigned long *)TRAMPOLINE_SYM_BSP(&kernel_phys_addr) = (unsigned long)start_addr;
 	*(unsigned long *)TRAMPOLINE_SYM_BSP(&boot_params_phys_addr) = __pa(boot_params);
+	pr_info("%s: trampoline addr 0x%p status = 0x%x\n", __func__,
+		(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp),
+		*(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp));
 
 	start_ip = __pa(TRAMPOLINE_SYM_BSP(trampoline_data_bsp)) + 0xa000;
 	BUG_ON(!IS_ALIGNED(start_ip, PAGE_SIZE));
 
-	printk(KERN_INFO "%s: booting on cpu %d, start_addr %lu, start_ip %lu\n",
+	printk(KERN_INFO "%s: booting on cpu %d, start_addr 0x%p, start_ip 0x%p\n",
 	       __func__, boot_cpu, (unsigned long)start_addr, start_ip);
 
 	smpboot_setup_warm_reset_vector(start_ip);
@@ -162,9 +165,12 @@ int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_param
 
 	udelay(100);
 
-	WARN_ON(*(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp) != 0xA5A5A5A5);
-
-	*(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp) = 0;
+	if (*(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp) != 0xA5A5A5A5) {
+		boot_error = -EFAULT;
+		pr_err("%s: didn't get a confirmation from trampoline (status = %x)\n",
+		       __func__, *(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp));
+	} else
+		*(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp) = 0;
 
 	return boot_error;
 }
