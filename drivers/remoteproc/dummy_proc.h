@@ -47,7 +47,7 @@ struct dummy_rproc_resourcetable {
 	struct fw_rsc_vdev_vring	rsc_ring0;
 	struct fw_rsc_vdev_vring	rsc_ring1;
 	struct fw_rsc_vdev_vring	rsc_ring2;
-	u8				rsc_vdev_cfg[24];
+	struct fw_rsc_vdev_config	rsc_vdev_cfg;
 };
 
 

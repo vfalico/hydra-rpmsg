@@ -333,7 +333,7 @@ struct fw_rsc_vdev_config {
 	struct fw_rsc_vdev_buf_desc lproc_desc;
 } __packed;
 
-#define RSC_VDEV_CONFIG_SIZE	(sizeof(fw_rsc_vdev_config))
+#define RSC_VDEV_CONFIG_SIZE	(sizeof(struct fw_rsc_vdev_config))
 
 /**
  * struct rproc_mem_entry - memory entry descriptor

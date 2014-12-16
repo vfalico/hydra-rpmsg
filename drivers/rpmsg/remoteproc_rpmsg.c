@@ -206,28 +206,6 @@ void *get_a_fixed_size_tx_buf(struct virtproc_info *vrp, u16 *idx)
 	return viov[0].iov_base;
 }
 
-/*
- * TODO add to header and add comments
- */
-#define RPMSG_VAR_VIRTQUEUE_NUM	32
-
-struct rpmsg_var_msg {
-	u32 len;
-	void *data;
-};
-
-struct rpmsg_req {
-	u8 ptype;
-	void *priv;
-	unsigned long src;
-	unsigned long dst;
-	struct rpmsg_var_msg usend;
-	struct rpmsg_var_msg urecv;
-	struct rpmsg_var_msg ksend;
-	struct rpmsg_var_msg krecv;
-	struct scatterlist sg[RPMSG_VAR_VIRTQUEUE_NUM];
-};
-
 void __debug_dump_rpmsg_req(struct virtproc_info *vrp, struct rpmsg_req *req,
 				struct scatterlist *sg, int out, int in,
 				struct iovec iov[],int iov_count)
@@ -322,7 +300,7 @@ static int rpmsg_pack_sg_list(struct scatterlist *sg, int start,
 	return index - start;
 }
 
-void rpmsg_sg_init(struct scatterlist **sg, struct rpmsg_req *req, int *out,
+static void rpmsg_sg_init(struct scatterlist **sg, struct rpmsg_req *req, int *out,
 			int *in)
 {
 	*out = rpmsg_pack_sg_list(req->sg, 0, RPMSG_VAR_VIRTQUEUE_NUM,
@@ -333,12 +311,12 @@ void rpmsg_sg_init(struct scatterlist **sg, struct rpmsg_req *req, int *out,
 	*sg = req->sg;
 }
 
-void rpmsg_free_buf(void *data, unsigned char ptype)
+static void rpmsg_free_buf(void *data, unsigned char ptype)
 {
 	kfree(data);
 }
 
-void *rpmsg_get_buf(unsigned size, unsigned char ptype)
+static void *rpmsg_get_buf(unsigned size, unsigned char ptype)
 {
 	void *data = 0;
 
@@ -349,7 +327,7 @@ void *rpmsg_get_buf(unsigned size, unsigned char ptype)
 	return data;
 }
 
-void rpmsg_release_request(struct rpmsg_req *req)
+static void rpmsg_release_request(struct rpmsg_req *req)
 {
 	rpmsg_free_buf(req->krecv.data, req->ptype);
 	rpmsg_free_buf(req->ksend.data, req->ptype);
@@ -561,5 +539,4 @@ void rpmsg_virtio_var_size_msg_work(struct work_struct *work)
 	else
 		rpmsg_dummy_ap_var_size_recv_work(vrp);
 }
-
 

@@ -65,7 +65,7 @@ struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable
 		.notifyid =	0,			/* magic number for IPC */
 		.dfeatures =	1,			/* features - VIRTIO_RPMSG_F_NS*/
 		.gfeatures =	0,			/* negotiated features - blank */
-		.config_len =	24,			/* config len - none (??) */
+		.config_len =	RSC_VDEV_CONFIG_SIZE,	/* config len */
 		.status =	0,			/* status - updated by bsp */
 		.num_of_vrings=	3,			/* we have 3 rings */
 		.reserved =	{ 0, 0},		/* reserved */

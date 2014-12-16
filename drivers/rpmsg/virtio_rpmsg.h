@@ -74,6 +74,45 @@ struct rpmsg_channel_info {
 	unsigned long dst;
 };
 
+/**
+ * struct rpmsg_var_msg - iov like representation to keep addresses of user
+ * and kernel buffers.
+ * @len: len of the buffer
+ * @data: address of buffer
+ */
+
+struct rpmsg_var_msg {
+	u32 len;
+	void *data;
+};
+
+#define RPMSG_VAR_VIRTQUEUE_NUM	32
+
+/**
+ * struct rpmsg_req - a Request structure assosiated with every variable sized
+ * request.
+ * @ptype: protocol type (TBD)
+ * @priv: private pointer for vrp.
+ * @src: rpdev src addr
+ * @dst: rpdev dst addr
+ * @usend: user space virtual address of send buffer
+ * @urecv: user space virtual address of recv buffer
+ * @ksend: kernel space virtual address of buffer allocated for coping send buf.
+ * @krecv: kernel space virtual address of buffer allocated for recving reply.
+ * @sg: scatter gather list for variable size tx requests.
+ */
+struct rpmsg_req {
+	u8 ptype;
+	void *priv;
+	unsigned long src;
+	unsigned long dst;
+	struct rpmsg_var_msg usend;
+	struct rpmsg_var_msg urecv;
+	struct rpmsg_var_msg ksend;
+	struct rpmsg_var_msg krecv;
+	struct scatterlist sg[RPMSG_VAR_VIRTQUEUE_NUM];
+};
+
 #define to_rpmsg_channel(d) container_of(d, struct rpmsg_channel, dev)
 #define to_rpmsg_driver(d) container_of(d, struct rpmsg_driver, drv)
 
