@@ -242,7 +242,7 @@ extern irqreturn_t vring_avail_interrupt(int irq, void *_vq);
  * TODO: Fix the following two routines to interrupt only the virtqueue which
  * has some work to do.
  */
-irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
+static irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
 {
 	struct rproc_vdev *lvdev;
 	struct rproc_vring *lvring;
@@ -258,7 +258,6 @@ irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
 		return IRQ_NONE;
 	}
 }
-EXPORT_SYMBOL(lproc_vq_interrupt);
 
 void dummy_lproc_callback(void *data)
 {
@@ -589,7 +588,6 @@ int __init localproc_init(void)
 
 	return ret;
 }
-EXPORT_SYMBOL(localproc_init);
 late_initcall(localproc_init);
 
 static void __exit localproc_exit(void)

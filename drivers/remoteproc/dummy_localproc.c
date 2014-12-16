@@ -34,7 +34,6 @@
 
 #include "dummy_proc.h"
 irqreturn_t rproc_vq_interrupt(struct rproc *rproc, int vq_id);
-extern void localproc_init(void);
 struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable
 	__attribute__((section(".resource_table"), aligned(PAGE_SIZE))) =
 {

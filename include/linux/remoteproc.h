@@ -323,6 +323,18 @@ struct fw_rsc_vdev {
 	struct fw_rsc_vdev_vring vring[0];
 } __packed;
 
+struct fw_rsc_vdev_buf_desc{
+	unsigned long addr;
+	u32 len;
+} __packed;
+
+struct fw_rsc_vdev_config {
+	struct fw_rsc_vdev_buf_desc rproc_desc;
+	struct fw_rsc_vdev_buf_desc lproc_desc;
+} __packed;
+
+#define RSC_VDEV_CONFIG_SIZE	(sizeof(fw_rsc_vdev_config))
+
 /**
  * struct rproc_mem_entry - memory entry descriptor
  * @va:	virtual address
