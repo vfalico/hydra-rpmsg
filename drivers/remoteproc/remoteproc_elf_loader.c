@@ -114,6 +114,12 @@ rproc_elf64_load_segments(struct rproc *rproc, const struct firmware *fw)
 	ehdr = (Elf64_Ehdr *)elf_data;
 	phdr = (Elf64_Phdr *)(elf_data + ehdr->e_phoff);
 
+	for (i = 0; i < ehdr->e_phnum; i++, phdr++) {
+		dev_info(dev, " segment %d ph addr 0x%p size 0x%lx\n", i, phdr->p_paddr, phdr->p_memsz);
+	}
+
+	phdr = (Elf64_Phdr *)(elf_data + ehdr->e_phoff);
+
 	/* go through the available ELF segments */
 	for (i = 0; i < ehdr->e_phnum; i++, phdr++) {
 		unsigned long da = phdr->p_paddr;
@@ -151,8 +157,12 @@ rproc_elf64_load_segments(struct rproc *rproc, const struct firmware *fw)
 		}
 
 		/* put the segment where the remote processor expects it */
-		if (phdr->p_filesz)
+		if (phdr->p_filesz) {
+			dev_info(dev, "    copying to va 0x%p from 0x%p (pa 0x%p), size %lx\n",
+				 ptr, elf_data + phdr->p_offset,
+				 __pa(elf_data + phdr->p_offset), filesz);
 			memcpy(ptr, elf_data + phdr->p_offset, filesz);
+		}
 
 		/*
 		 * Zero out remaining memory for this segment.
