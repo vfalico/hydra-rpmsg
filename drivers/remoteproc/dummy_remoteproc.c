@@ -157,7 +157,7 @@ static int dummy_rproc_start(struct rproc *rproc)
 		cmdline_override = cmdline_build_str;
 
 		sprintf(cmdline_override,
-			"lproc=%d acpi_irq_nobalance lapic_timer=1000000 debug noapic noreplace-smp",
+			"lproc=%d acpi_irq_nobalance lapic_timer=1000000 debug noapic noapictimer noreplace-smp",
 			boot_cpu);
 
 		if (!strcmp(pci_devices_handover, "disabled"))
