@@ -340,6 +340,8 @@ void __init dummy_lproc_show_banner(void)
 	cpumask_copy((struct cpumask *)cpu_active_mask, cpu_online_mask);
 //	cpumask_copy((struct cpumask *)cpu_possible_mask, cpu_online_mask);
 //	nr_cpu_ids = setup_max_cpus;
+
+	current_thread_info()->cpu = cpu;  /* needed? */
 }
 
 extern struct smp_ops smp_ops;
