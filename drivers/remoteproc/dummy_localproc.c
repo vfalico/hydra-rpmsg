@@ -324,21 +324,20 @@ void __init dummy_lproc_show_banner(void)
 
 	switch_to_new_gdt(cpu);
 	cpumask_set_cpu(cpu, cpu_callout_mask);
-	cpumask_set_cpu(0, cpu_callout_mask);
 	per_cpu(cpu_state, cpu) = CPU_ONLINE;
 
 	cpulist_scnprintf(cpus, sizeof(cpus), dummy_lproc_cpu_mask);
 	printk(KERN_INFO "dummy_lproc: booting on CPU(s) %s (cpu_id %d cpu_number %d))\n",
 	       cpus, smp_processor_id(), this_cpu_read(cpu_number));
 
-//	setup_max_cpus = cpumask_weight(dummy_lproc_cpu_mask);
+	setup_max_cpus = cpumask_weight(dummy_lproc_cpu_mask);
 
-//	cpumask_copy((struct cpumask *)cpu_present_mask, dummy_lproc_cpu_mask);
+	cpumask_copy((struct cpumask *)cpu_present_mask, dummy_lproc_cpu_mask);
 	cpumask_clear((struct cpumask *)cpu_online_mask);
 	cpumask_set_cpu(first_cpu(cpumask_bits(dummy_lproc_cpu_mask)),
 			(struct cpumask *)cpu_online_mask);
 	cpumask_copy((struct cpumask *)cpu_active_mask, cpu_online_mask);
-//	cpumask_copy((struct cpumask *)cpu_possible_mask, cpu_online_mask);
+	cpumask_copy((struct cpumask *)cpu_possible_mask, cpu_online_mask);
 //	nr_cpu_ids = setup_max_cpus;
 
 	current_thread_info()->cpu = cpu;  /* needed? */
