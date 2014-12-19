@@ -28,6 +28,7 @@
 #include <asm/smpboot_hooks.h>
 #include <asm/uv/uv.h>
 #include <linux/cpu.h>
+#include <asm/cpu.h>
 #include <asm/x86_init.h>
 
 #include "dummy_proc.h"
@@ -104,6 +105,16 @@ int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_param
 {
 	unsigned long boot_error = 0, start_ip;
 	int apicid, send_status = 0, j, accept_status, ret;
+	size_t size = PAGE_ALIGN(x86_trampoline_bsp_end - x86_trampoline_bsp_start);
+	char *bsp_hacked;
+
+	bsp_hacked = __va(__pa(x86_trampoline_bsp_start) + 0x400000);
+	printk(KERN_DEBUG "Base memory trampoline BSP at [%p] %llx size %zu, copying from 0x%p (pa 0x%p, va hacked 0x%p)\n",
+	       x86_trampoline_bsp_base, (unsigned long long)__pa(x86_trampoline_bsp_base),
+	       size, x86_trampoline_bsp_start,
+	       __pa(x86_trampoline_bsp_start),
+	       bsp_hacked);
+	memcpy(x86_trampoline_bsp_base, bsp_hacked, size);
 
 	ret = cpu_down(boot_cpu);
 
@@ -114,14 +125,14 @@ int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_param
 	}
 
 	apicid = per_cpu(x86_bios_cpu_apicid, boot_cpu);
-
-	*(unsigned long *)TRAMPOLINE_SYM_BSP(&kernel_phys_addr) = (unsigned long)start_addr;
-	*(unsigned long *)TRAMPOLINE_SYM_BSP(&boot_params_phys_addr) = __pa(boot_params);
 	pr_info("%s: trampoline addr 0x%p status = 0x%x\n", __func__,
 		(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp),
 		*(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp));
 
-	start_ip = __pa(TRAMPOLINE_SYM_BSP(trampoline_data_bsp)) + 0xa000;
+	*(unsigned long *)TRAMPOLINE_SYM_BSP(&kernel_phys_addr) = (unsigned long)start_addr;
+	*(unsigned long *)TRAMPOLINE_SYM_BSP(&boot_params_phys_addr) = __pa(boot_params);
+
+	start_ip = __pa(TRAMPOLINE_SYM_BSP(trampoline_data_bsp));
 	BUG_ON(!IS_ALIGNED(start_ip, PAGE_SIZE));
 
 	printk(KERN_INFO "%s: booting on cpu %d, start_addr 0x%p, start_ip 0x%p\n",
@@ -169,8 +180,15 @@ int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_param
 		boot_error = -EFAULT;
 		pr_err("%s: didn't get a confirmation from trampoline (status = %x)\n",
 		       __func__, *(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp));
-	} else
+		/* XXX: hack, add some time for the kernel to be able to
+		 * notify us, otherwise there's a high chance of panic
+		 * without any info. */
+		mdelay(100);
+	} else {
+		pr_info("%s: got boot confirmation from remote trampoline, clearing up\n",
+			__func__);
 		*(volatile u32 *)TRAMPOLINE_SYM_BSP(trampoline_status_bsp) = 0;
+	}
 
 	return boot_error;
 }
@@ -260,6 +278,7 @@ static void __init dummy_lproc_setup_trampoline(void)
 {
 	phys_addr_t mem;
 	size_t size = PAGE_ALIGN(x86_trampoline_bsp_end - x86_trampoline_bsp_start);
+	char *bsp_hacked;
 
 	/* Has to be in very low memory so we can execute real-mode AP code. */
 	mem = memblock_find_in_range(0, 1<<20, size, PAGE_SIZE);
@@ -268,11 +287,14 @@ static void __init dummy_lproc_setup_trampoline(void)
 
 	x86_trampoline_bsp_base = __va(mem);
 	memblock_reserve(mem, size);
+	bsp_hacked = __va(__pa(x86_trampoline_bsp_start) + 0x400000);
 
-	printk(KERN_DEBUG "Base memory trampoline BSP at [%p] %llx size %zu\n",
-	       x86_trampoline_bsp_base, (unsigned long long)mem, size);
+	printk(KERN_DEBUG "Base memory trampoline BSP at [%p] %llx size %zu, copying from 0x%p (pa 0x%p, va hacked 0x%p)\n",
+	       x86_trampoline_bsp_base, (unsigned long long)mem, size, x86_trampoline_bsp_start,
+	       __pa(x86_trampoline_bsp_start),
+	       bsp_hacked);
 
-	memcpy(x86_trampoline_bsp_base, x86_trampoline_bsp_start, size);
+	memcpy(x86_trampoline_bsp_base, bsp_hacked, size);
 	set_memory_x((unsigned long)x86_trampoline_bsp_base, size >> PAGE_SHIFT);
 }
 
@@ -296,18 +318,31 @@ static struct cpumask *dummy_lproc_cpu_mask = to_cpumask(dummy_lproc_cpu_bits);
 void __init dummy_lproc_show_banner(void)
 {
 	char cpus[NR_CPUS*5];
+	int cpu = first_cpu(cpumask_bits(dummy_lproc_cpu_mask));
+
+//	native_smp_prepare_boot_cpu();
+
+	switch_to_new_gdt(cpu);
+	cpumask_set_cpu(cpu, cpu_callout_mask);
+	cpumask_set_cpu(0, cpu_callout_mask);
+	per_cpu(cpu_state, cpu) = CPU_ONLINE;
 
 	cpulist_scnprintf(cpus, sizeof(cpus), dummy_lproc_cpu_mask);
-	printk(KERN_INFO "dummy_lproc: booting on CPU(s) %s\n", cpus);
+	printk(KERN_INFO "dummy_lproc: booting on CPU(s) %s (cpu_id %d cpu_number %d))\n",
+	       cpus, smp_processor_id(), this_cpu_read(cpu_number));
 
-	setup_max_cpus = cpumask_weight(dummy_lproc_cpu_mask);
+//	setup_max_cpus = cpumask_weight(dummy_lproc_cpu_mask);
 
-	cpumask_copy((struct cpumask *)cpu_present_mask, dummy_lproc_cpu_mask);
+//	cpumask_copy((struct cpumask *)cpu_present_mask, dummy_lproc_cpu_mask);
 	cpumask_clear((struct cpumask *)cpu_online_mask);
-	cpumask_set_cpu(first_cpu(cpumask_bits(cpu_present_mask)),
+	cpumask_set_cpu(first_cpu(cpumask_bits(dummy_lproc_cpu_mask)),
 			(struct cpumask *)cpu_online_mask);
 	cpumask_copy((struct cpumask *)cpu_active_mask, cpu_online_mask);
+//	cpumask_copy((struct cpumask *)cpu_possible_mask, cpu_online_mask);
+//	nr_cpu_ids = setup_max_cpus;
 }
+
+extern struct smp_ops smp_ops;
 
 static int __init dummy_lproc_early_param(char *p)
 {
@@ -322,7 +357,8 @@ static int __init dummy_lproc_early_param(char *p)
 
 	dummy_lproc_id = 1;
 
-	x86_init.oem.banner = dummy_lproc_show_banner;
+//	x86_init.oem.banner = dummy_lproc_show_banner;
+	smp_ops.smp_prepare_boot_cpu = dummy_lproc_show_banner;
 
 	return 0;
 }
