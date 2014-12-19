@@ -21,6 +21,20 @@
 
 #define	RPMSG_MAX_IOV_SIZE	32
 
+struct pool_pkt_info {
+	size_t base_size;
+	size_t mod_size;
+	int base_cnt;
+	int mod_cnt;
+	int act_size;
+};
+
+struct rpmsg_dma_pool {
+	struct dma_pool *pool;
+	size_t size;
+	size_t align;
+};
+
 /**
  * struct virtproc_info - virtual remote processor state
  * @vdev:	the virtio device
@@ -60,6 +74,7 @@ struct virtproc_info {
 	struct work_struct var_size_recv_work;
 	struct iovec piov[RPMSG_MAX_IOV_SIZE];
 	struct iovec viov[RPMSG_MAX_IOV_SIZE];
+	struct rpmsg_dma_pool *dma_mem_pool;
 };
 
 /**
