@@ -123,6 +123,8 @@ int dummy_lproc_boot_remote_cpu(int boot_cpu, void *start_addr, void *boot_param
 		       __func__, boot_cpu, ret);
 		return ret;
 	}
+	arch_unregister_cpu(boot_cpu);
+	set_cpu_present(boot_cpu, false);
 
 	apicid = per_cpu(x86_bios_cpu_apicid, boot_cpu);
 	pr_info("%s: trampoline addr 0x%p status = 0x%x\n", __func__,
