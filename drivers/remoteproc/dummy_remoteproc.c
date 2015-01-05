@@ -241,9 +241,10 @@ static int dummy_rproc_start(struct rproc *rproc)
 					  HZ * boot_timeout);
 
 	if (!ret) {
-		dev_err(&rproc->dev, "didn't get a boot confirmation from AP.\n");
-		ret = -EFAULT;
-		goto free_str;
+		/* XXX: add fail/rollback once we can reliably get a
+		 * booting kick from the AP
+		 */
+		dev_warn(&rproc->dev, "didn't get a boot confirmation from AP.\n");
 	}
 
 	ret = dummy_lproc_set_bsp_callback(dummy_rproc_kick_callback, rproc);
