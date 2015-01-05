@@ -352,6 +352,7 @@ static int __init dummy_lproc_early_param(char *p)
 
 //	x86_init.oem.banner = dummy_lproc_show_banner;
 	smp_ops.smp_prepare_boot_cpu = dummy_lproc_show_banner;
+	lapic_timer_frequency = 1000000;
 
 	return 0;
 }
