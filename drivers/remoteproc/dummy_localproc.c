@@ -280,7 +280,6 @@ static void __init dummy_lproc_setup_trampoline(void)
 {
 	phys_addr_t mem;
 	size_t size = PAGE_ALIGN(x86_trampoline_bsp_end - x86_trampoline_bsp_start);
-	char *bsp_hacked;
 
 	/* Has to be in very low memory so we can execute real-mode AP code. */
 	mem = memblock_find_in_range(0, 1<<20, size, PAGE_SIZE);
@@ -289,15 +288,6 @@ static void __init dummy_lproc_setup_trampoline(void)
 
 	x86_trampoline_bsp_base = __va(mem);
 	memblock_reserve(mem, size);
-	bsp_hacked = __va(__pa(x86_trampoline_bsp_start) + 0x400000);
-
-	printk(KERN_DEBUG "Base memory trampoline BSP at [%p] %llx size %zu, copying from 0x%p (pa 0x%p, va hacked 0x%p)\n",
-	       x86_trampoline_bsp_base, (unsigned long long)mem, size, x86_trampoline_bsp_start,
-	       __pa(x86_trampoline_bsp_start),
-	       bsp_hacked);
-
-	memcpy(x86_trampoline_bsp_base, bsp_hacked, size);
-	set_memory_x((unsigned long)x86_trampoline_bsp_base, size >> PAGE_SHIFT);
 }
 
 static int __init dummy_lproc_init(void)
