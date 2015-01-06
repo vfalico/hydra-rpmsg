@@ -265,13 +265,13 @@ void dummy_lproc_callback(void *data)
 	int i;
 
 	if (unlikely(!lproc)) {
-		printk(KERN_INFO "In %s %p\n",__func__, lproc);
+		printk(KERN_DEBUG "In %s %p\n",__func__, lproc);
 		return;
 	}
 
 	for (i=0; i <= lproc->max_notifyid; i++) {
 		if(lproc_vq_interrupt(lproc,i) == IRQ_NONE) {
-			printk(KERN_INFO "%s No work to do vq %d\n",__func__,i);
+			//printk(KERN_DEBUG "%s No work to do vq %d\n",__func__,i);
 		}
 	}
 }

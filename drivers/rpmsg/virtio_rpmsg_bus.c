@@ -671,10 +671,10 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, unsigned long src, un
 	msg->reserved = 0;
 	memcpy(msg->data, data, len);
 
+#if 0
 	dev_info(dev, "TX From 0x%lx, To 0x%lx, Len %d, Flags %d, Reserved %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
-#if 0
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio TX: ", DUMP_PREFIX_NONE, 16, 1,
 					msg, sizeof(*msg) + msg->len, true);
 #endif
@@ -713,10 +713,10 @@ int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 	struct scatterlist sg;
 	int err;
 
+#if 0
 	dev_info(dev, "From: 0x%lx, To: 0x%lx, Len: %d, Flags: %d, Reserved: %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
-#if 0
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio RX: ", DUMP_PREFIX_NONE, 16, 1,
 					msg, sizeof(*msg) + msg->len, true);
 #endif
@@ -814,7 +814,7 @@ static void rpmsg_xmit_done(struct virtqueue *svq)
 {
 	struct virtproc_info *vrp = svq->vdev->priv;
 
-	dev_info(&svq->vdev->dev, "%s vq: %s\n", __func__, svq->name);
+	dev_dbg(&svq->vdev->dev, "%s vq: %s\n", __func__, svq->name);
 
 	/* wake up potential senders that are waiting for a tx buffer */
 	wake_up_interruptible(&vrp->sendq);

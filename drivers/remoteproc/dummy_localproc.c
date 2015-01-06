@@ -225,7 +225,7 @@ void __visible smp_dummy_lproc_kicked(void)
 	ack_APIC_irq();
 	irq_enter();
 
-	printk(KERN_INFO "AP got kicked.\n");
+	//printk(KERN_DEBUG "AP got kicked.\n");
 	if (likely(dummy_lproc_ap_callback))
 		dummy_lproc_ap_callback(dummy_lproc_ap_data);
 	else
