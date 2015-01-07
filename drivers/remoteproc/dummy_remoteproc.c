@@ -127,7 +127,7 @@ static void dummy_rproc_callback(void *data)
 	 */
 	for (i=0; i <= rproc->max_notifyid; i++) {
 		if(rproc_vq_interrupt(rproc, i) == IRQ_NONE) {
-			printk(KERN_INFO "%s No msg found in vq %d\n",__func__,i);
+		//	printk(KERN_INFO "%s No msg found in vq %d\n",__func__,i);
 		}
 	}
 }

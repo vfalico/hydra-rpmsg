@@ -36,17 +36,18 @@
 #include <linux/remoteproc.h>
 #include "virtio_rpmsg.h"
 
-#define MSG_SIZE	100
+#define MSG_SIZE		480
+
+char buf[MSG_SIZE];
 
 static void dummy_rpmsg_cb(struct rpmsg_channel *rpdev, void *data, int len,
 						void *priv, unsigned long src)
 {
 	static unsigned int reply_cnt;
-	char buf[MSG_SIZE];
 	int ret;
 
 	len = snprintf(buf, MSG_SIZE, "Reply from lproc %u",++reply_cnt);
-	ret = rpmsg_sendto(rpdev, buf, len + 1, src);
+	ret = rpmsg_sendto(rpdev, buf, MSG_SIZE, src);
 	if(ret)
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
 }

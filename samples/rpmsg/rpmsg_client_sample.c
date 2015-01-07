@@ -18,6 +18,7 @@
 #include <linux/rpmsg.h>
 #include <linux/ktime.h>
 #include <linux/hrtimer.h>
+#include <linux/delay.h>
 
 #define MSG		"hello world!"
 
@@ -28,19 +29,19 @@ enum rpmsg_ptest {
 	RPMSG_MAX_TEST
 };
 
-//#define VAR_TEST	0
+#define VAR_TEST	1
 
 #ifdef VAR_TEST
 
-#define RLEN		(8192)
-#define SLEN		(RLEN * 2)
+#define RLEN		(2048)
+#define SLEN		(RLEN)
 #define PTYPE		RPMSG_VAR_SIZE_LATENCY
 #define MSG_LIMIT	200
 
 #else
 
-#define RLEN		(512 - sizeof(struct rpmsg_hdr))
-#define SLEN		RLEN
+#define RLEN		(256 + sizeof(struct rpmsg_hdr))
+#define SLEN		(RLEN - sizeof(struct rpmsg_hdr))
 #define PTYPE		RPMSG_FIXED_SIZE_LATENCY
 #define MSG_LIMIT	200
 
@@ -56,11 +57,13 @@ struct rpmsg_perf_timestamp {
 struct rpmsg_perf_stats {
 	u32 nsend;
 	u32 nrecv;
+	u64 bsend;
+	u64 brecv;
 	u64 tmin;
 	u64 tmax;
 	u64 tavg;
 	u64 tsum;
-	u64 triptime;
+	s64 triptime;
 	struct rpmsg_perf_timestamp timestamps[MAX_TEST_STATE];
 };
 
@@ -69,6 +72,8 @@ struct rpmsg_perf_stats gstats;
 #define G (*(struct rpmsg_perf_stats*)&gstats)
 #define nsend		(G.nsend)
 #define nrecv		(G.nrecv)
+#define bsend		(G.bsend)
+#define	brecv		(G.brecv)
 #define tmin		(G.tmin)
 #define tmax		(G.tmax)
 #define tavg		(G.tavg)
@@ -81,12 +86,17 @@ struct rpmsg_perf_stats gstats;
 #define test_start_time (G.timestamps[2].start_time)
 #define test_end_time	(G.timestamps[2].end_time)
 
+#define INIT_STATS()	do {	\
+	memset(&gstats, 0, sizeof(struct rpmsg_perf_stats));	\
+	tmin = UINT_MAX;					\
+} while(0)
+
 #define LOG_TIME(x)	do {	\
 	x = ktime_get_real();	\
 } while(0)
 
 #define UPDATE_ROUND_TRIP_STATS()	do {		\
-	triptime = ktime_to_ns(recv_end_time) -		\
+	t = triptime = ktime_to_ns(recv_end_time) -	\
 			ktime_to_ns(send_start_time);	\
 	triptime = triptime/1000;			\
 	tsum += triptime;				\
@@ -95,7 +105,28 @@ struct rpmsg_perf_stats gstats;
 	if(triptime > tmax)				\
 		tmax = triptime;			\
 							\
-}while(0)
+} while(0)
+
+#define PRINT_TEST_SUMMARY()	do {			\
+	uint64_t totalbytes;				\
+	totalbytes = bsend + brecv;			\
+	tsum = (tsum/1000);				\
+	printk("\n--- rpmsg ping statistics ---\n"	\
+			"%lu packets transmitted, "	\
+			"%lu packets received, "	\
+			"%lu bytes transfered, "	\
+			"%u bytes/ms. \n",		\
+			nsend, nrecv, totalbytes,	\
+			(totalbytes / tsum));		\
+	if (tmin != UINT_MAX) {				\
+		tavg = tsum / nrecv;			\
+		printk("round-trip min/avg/max = "	\
+			"%u.%03u/%u.%03u/%u.%03u ms\n",	\
+			tmin / 1000, tmin % 1000,	\
+			tavg / 1000, tavg % 1000,	\
+			tmax / 1000, tmax % 1000);	\
+	}						\
+} while(0)
 
 struct rpmsg_perf {
 	char *rbuf;
@@ -124,19 +155,26 @@ static void rpmsg_perf_free_resources(struct rpmsg_perf *rpt)
 	vfree(rpt->sbuf);
 }
 
+static void inline __fill_data(char *buf, int len)
+{
+	memset(buf, 'a', len);
+}
+
 static void rpmsg_perf_cb(struct rpmsg_channel *rpdev, void *data, int len,
 						void *priv, u32 src)
 {
+	s64 t;
 	struct rpmsg_perf *rpt = &grpt; // later we should use priv for this.
 
 	LOG_TIME(recv_end_time);
 
 	nrecv++;
+	brecv += (len + sizeof(struct rpmsg_hdr));
 
 	UPDATE_ROUND_TRIP_STATS();
 
-	dev_info(&rpdev->dev, "%d bytes from 0x%x seq=%d rtt=%u.%03u ms\n",
-			len, src, nrecv, triptime / 1000, triptime % 1000);
+	dev_info(&rpdev->dev, "%d bytes from 0x%x seq=%d t= %ld rtt=%ld us\n",
+			len, src, nrecv, t, triptime);
 
 	rpt->cb(rpdev, data, len, (void *)rpt, src);
 }
@@ -152,25 +190,28 @@ static void rpmsg_perf_fixed_size_cb(struct rpmsg_channel *rpdev, void *data,
 		       data, len,  true);
 #endif
 	if (nrecv >= MSG_LIMIT) {
-		dev_info(&rpdev->dev, "%s goodbye!\n",__func__);
+		PRINT_TEST_SUMMARY();
 		return;
 	}
+	//msleep(1000);
 
 	LOG_TIME(send_start_time);
 
+	__fill_data((char *)(rpt->sbuf + sizeof(struct rpmsg_hdr)),
+					(rpt->slen - sizeof(struct rpmsg_hdr)));
 	ret = rpmsg_send(rpdev, rpt->sbuf, rpt->slen);
 	if (ret)
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
 
 	LOG_TIME(send_end_time);
 	nsend++;
+	bsend += rpt->slen;
 }
 
 static void rpmsg_perf_var_size_cb(struct rpmsg_channel *rpdev, void *data,
 	       					int len, void *priv, u32 src)
 {
 	int ret;
-	static int rx_count;
 	struct rpmsg_perf *rpt = priv;
 
 #if 0
@@ -179,18 +220,21 @@ static void rpmsg_perf_var_size_cb(struct rpmsg_channel *rpdev, void *data,
 
 #endif
 	if (nrecv >= MSG_LIMIT) {
-		dev_info(&rpdev->dev, "%s goodbye!\n",__func__);
+		PRINT_TEST_SUMMARY();
 		return;
 	}
 
 	LOG_TIME(send_start_time);
 
+	__fill_data((char *)(rpt->sbuf + sizeof(struct rpmsg_hdr)),
+					(rpt->slen - sizeof(struct rpmsg_hdr)));
 	ret = rpmsg_send_recv(rpdev, rpt->sbuf, rpt->slen, rpt->rbuf, rpt->rlen);
 	if (ret)
 		dev_err(&rpdev->dev, "rpmsg_send_recv failed: %d\n", ret);
 
 	LOG_TIME(send_end_time);
 	nsend++;
+	bsend += rpt->slen;
 }
 
 static struct rpmsg_perf * rpmsg_perf_test_trigger(struct rpmsg_channel *rpdev)
@@ -198,12 +242,11 @@ static struct rpmsg_perf * rpmsg_perf_test_trigger(struct rpmsg_channel *rpdev)
 	int ret = 0;
 	struct rpmsg_perf *rpt = &grpt;
 
+	INIT_STATS();
 	rpt->rpdev = rpdev;
 	rpt->type = PTYPE;
-
 	rpt->sbuf = vmalloc(grpt.slen);
 	rpt->rbuf = vmalloc(grpt.rlen);
-
 	LOG_TIME(send_start_time);
 	switch(rpt->type) {
 		case RPMSG_FIXED_SIZE_LATENCY:
@@ -232,6 +275,7 @@ static struct rpmsg_perf * rpmsg_perf_test_trigger(struct rpmsg_channel *rpdev)
 	}
 	LOG_TIME(send_end_time);
 	nsend++;
+	bsend += rpt->slen;
 	return rpt;
 }
 
