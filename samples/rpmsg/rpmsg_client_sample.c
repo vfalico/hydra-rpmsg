@@ -21,9 +21,8 @@
 #include <linux/cdev.h>
 #include <linux/fs.h>
 #include <linux/idr.h>
-#include <linux/slab.h>  
-
-#define MSG		"hello world!"
+#include <linux/slab.h>
+#include "rpmsg_client_ioctl.h"
 
 enum rpmsg_ptest {
 	RPMSG_NULL_TEST,
@@ -147,7 +146,7 @@ struct rpmsg_perf {
 			void *priv, u32 src);
 };
 
-struct rpmsg_perf grpt = {
+static struct rpmsg_perf grpt = {
 	.rbuf =	NULL,
 	.sbuf =	NULL,
 	.rlen =	RLEN,
@@ -165,12 +164,20 @@ static struct class *g_rpmsg_client_class;
 static dev_t g_rpmsg_client_devno;
 
 #define RPMSG_CLIENT_MAX_NUM_DEVS		256
+#define RPMSG_CLIENT_DEV			"crpmsg"
+
 static const char rpmsg_client_driver_name[] = "rpmsg_client";
 
 struct rpmsg_client_device {
-	struct cdev cdev;
 	int id;
 	void *priv;
+	struct cdev cdev;
+	struct rpmsg_channel *rpdev;
+};
+static struct rpmsg_client_device *rcdev;
+
+struct rpmsg_client_vdev {
+	struct rpmsg_client_device *rcdev;
 };
 
 int rpmsg_open(struct inode *inode, struct file *f);
@@ -179,14 +186,43 @@ long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg);
 
 int rpmsg_open(struct inode *inode, struct file *f)
 {
+	struct rpmsg_client_vdev *rvdev;
+	struct rpmsg_client_device *rcdev = container_of(inode->i_cdev,
+			 struct rpmsg_client_device, cdev);
+
+	printk(KERN_INFO "%s\n",__func__);
+	rvdev = kmalloc(sizeof(*rvdev), GFP_KERNEL);
+	if(!rvdev)
+		return -ENOMEM;
+	rvdev->rcdev = rcdev;
+	f->private_data = rvdev;
 	return 0;
 }
+
 int rpmsg_release(struct inode *inode, struct file *f)
 {
+	struct rpmsg_client_vdev *rvdev = f->private_data;
+	printk(KERN_INFO "%s\n",__func__);
+	kfree(rvdev);
 	return 0;
 }
+
 long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
+	struct rpmsg_client_vdev *rvdev = f->private_data;
+	void __user *argp = (void __user *)arg;
+
+	printk(KERN_INFO "%s\n",__func__);
+	switch (cmd) {
+		case RPMSG_CLIENT_DUMMY_IOCTL:
+			printk(KERN_INFO "%s cmd: %d argp %p\n", __func__, cmd,
+					 argp);
+			break;
+		default:
+			printk(KERN_INFO "%s cmd: %d ioctl failed\n", __func__,
+					 cmd);
+			return -ENOIOCTLCMD;
+	}
 	return 0;
 }
 
@@ -330,18 +366,16 @@ static int rpmsg_client_probe(struct rpmsg_channel *rpdev)
 {
 	int ret = 0;
 	struct rpmsg_perf *rpt;
-	struct rpmsg_client_device *rcdev;
-
+	struct device *device = NULL;
+	dev_t devno;
 	dev_info(&rpdev->dev, "new channel: 0x%lx -> 0x%lx!\n",
 					rpdev->src, rpdev->dst);
-
 	rcdev = kzalloc(sizeof(*rcdev), GFP_KERNEL);
 	if (IS_ERR(rcdev)) {
 		ret = PTR_ERR(rcdev);
 		dev_err(&rpdev->dev, "rcdev kmalloc failed %d\n",ret);
 		return ret;
 	}
-
 	rcdev->id = ida_simple_get(&g_rpmsg_client_ida, 0,
 		       		RPMSG_CLIENT_MAX_NUM_DEVS, GFP_KERNEL);
 	if (rcdev->id < 0) {
@@ -349,17 +383,31 @@ static int rpmsg_client_probe(struct rpmsg_channel *rpdev)
 		dev_err(&rpdev->dev, "ida_simple_get failed %d\n", ret);
 		goto ida_fail;
 	}
+	devno = MKDEV(MAJOR(g_rpmsg_client_devno), rcdev->id);
 	cdev_init(&rcdev->cdev, &rpmsg_client_fops);
 	rcdev->cdev.owner = THIS_MODULE;
-	ret = cdev_add(&rcdev->cdev, MKDEV(MAJOR(g_rpmsg_client_devno),
-								rcdev->id), 1);
+	ret = cdev_add(&rcdev->cdev, devno, 1);
 	if (ret) {
-		dev_err(&rpdev->dev, "cdev_add err id %d ret %d\n", rcdev->id, ret);
+		dev_err(&rpdev->dev, "cdev_add err id %d ret %d\n",
+								rcdev->id, ret);
 		goto cdevice_init_fail;
 	}
-	rpt = rpmsg_client_trigger(rpdev);
+	device = device_create(g_rpmsg_client_class, NULL, devno, NULL,
+			 RPMSG_CLIENT_DEV "%d", rcdev->id);
+	if (IS_ERR(device)) {
+		ret = PTR_ERR(device);
+		dev_err(&rpdev->dev, "devce_create failed with %d while trying"
+				"to create %s%d", RPMSG_CLIENT_DEV, rcdev->id);
+		goto cdevice_create_fail;
+	}
+	rcdev->rpdev = rpdev;
+	dev_info(&rpdev->dev, "device %s%d created!\n", RPMSG_CLIENT_DEV,
+								rcdev->id);
+	//rpt = rpmsg_client_trigger(rpdev);
 	return ret;
 
+cdevice_create_fail:
+	cdev_del(&rcdev->cdev);
 cdevice_init_fail:
 	ida_simple_remove(&g_rpmsg_client_ida, rcdev->id);
 ida_fail:
@@ -370,8 +418,7 @@ ida_fail:
 static void __devexit rpmsg_client_remove(struct rpmsg_channel *rpdev)
 {
 	rpmsg_client_free_resources(&grpt); // FIXME
-	dev_info(&rpdev->dev, "rpmsg perf test driver is removed\n");
-	//cdev_del(&rcdev->cdev);
+		dev_info(&rpdev->dev, "rpmsg perf test driver is removed\n");
 }
 
 static struct rpmsg_device_id rpmsg_driver_sample_id_table[] = {
@@ -399,7 +446,6 @@ static int __init rpmsg_client_init(void)
 		printk(KERN_ERR "alloc_chrdev_region failed ret %d\n", ret);
 		return ret;
 	}
-#if 0
 	g_rpmsg_client_class = class_create(THIS_MODULE,
 						rpmsg_client_driver_name);
 	if (IS_ERR(g_rpmsg_client_class)) {
@@ -407,7 +453,6 @@ static int __init rpmsg_client_init(void)
 		printk(KERN_ERR "class_create failed ret %d\n", ret);
 		goto cleanup_chrdev;
 	}
-#endif
 	ida_init(&g_rpmsg_client_ida);
 	ret = register_rpmsg_driver(&rpmsg_client);
 	if(ret) {
@@ -417,17 +462,22 @@ static int __init rpmsg_client_init(void)
 	return ret;
 cleanup_class:
 	class_destroy(g_rpmsg_client_class);
-#if 0
 cleanup_chrdev:
 	unregister_chrdev_region(g_rpmsg_client_devno,
 						RPMSG_CLIENT_MAX_NUM_DEVS);
-#endif
 	return ret;
 }
 module_init(rpmsg_client_init);
 
 static void __exit rpmsg_client_fini(void)
 {
+	ida_simple_remove(&g_rpmsg_client_ida, rcdev->id);
+	cdev_del(&rcdev->cdev);
+	device_destroy(g_rpmsg_client_class, MKDEV(MAJOR(g_rpmsg_client_devno),
+				rcdev->id));
+	class_destroy(g_rpmsg_client_class);
+	unregister_chrdev_region(g_rpmsg_client_devno,
+						RPMSG_CLIENT_MAX_NUM_DEVS);
 	unregister_rpmsg_driver(&rpmsg_client);
 }
 module_exit(rpmsg_client_fini);
