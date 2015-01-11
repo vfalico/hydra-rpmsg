@@ -38,33 +38,8 @@ static dev_t g_rpmsg_client_devno;
 
 static const char driver_name[] = "rpmsg_client";
 
-struct rpmsg_client_device {
-	int id;
-	void *priv;
-	struct cdev cdev;
-	struct rpmsg_channel *rpdev;
-};
-
-struct rpmsg_client_vdev {
-	struct rpmsg_client_device *rcdev;
-};
-
-struct rpmsg_perf {
-	char *rbuf;
-	char *sbuf;
-	int rlen;
-	int slen;
-	int times;
-	enum rpmsg_ptest type;
-	struct rpmsg_channel *rpdev;
-	void (*cb)(struct rpmsg_channel *rpdev, void *data, int len,
-			void *priv, unsigned int src);
-};
-
 /* Globals */
 static struct rpmsg_client_device *rcdev;
-static struct rpmsg_client_stats gstats;
-static struct rpmsg_perf grpt;
 
 int rpmsg_open(struct inode *inode, struct file *f)
 {
@@ -89,8 +64,6 @@ int rpmsg_release(struct inode *inode, struct file *f)
 	return 0;
 }
 
-static void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
-		 				struct rpmsg_test_args *targs);
 long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
 	struct rpmsg_client_vdev *rvdev = f->private_data;
@@ -123,143 +96,6 @@ static const struct file_operations rpmsg_client_fops = {
 	.unlocked_ioctl = rpmsg_ioctl,
 	.owner = THIS_MODULE,
 };
-
-static void rpmsg_client_free_resources(struct rpmsg_perf *rpt)
-{
-	vfree(rpt->rbuf);
-	vfree(rpt->sbuf);
-}
-
-static void inline __fill_data(char *buf, int len)
-{
-	memset(buf, 'a', len);
-}
-
-static void rpmsg_client_cb(struct rpmsg_channel *rpdev, void *data, int len,
-						void *priv, u32 src)
-{
-	s64 t;
-	struct rpmsg_perf *rpt = &grpt; // later we should use priv for this.
-
-	LOG_TIME(recv_end_time);
-
-	nrecv++;
-	brecv += (len + sizeof(struct rpmsg_hdr));
-
-	UPDATE_ROUND_TRIP_STATS();
-
-	dev_info(&rpdev->dev, "%d bytes from 0x%x seq=%d t= %ld rtt=%ld us\n",
-			len, src, nrecv, t, triptime);
-
-	rpt->cb(rpdev, data, len, (void *)rpt, src);
-}
-
-static void rpmsg_client_fixed_size_cb(struct rpmsg_channel *rpdev, void *data,
-	       					int len, void *priv, u32 src)
-{
-	int ret;
-	struct rpmsg_perf *rpt = priv;
-
-#if 0
-	print_hex_dump(KERN_DEBUG, __func__, DUMP_PREFIX_NONE, 16, 1,
-		       data, len,  true);
-#endif
-	if (nrecv >= rpt->times) {
-		PRINT_TEST_SUMMARY();
-		return;
-	}
-
-	LOG_TIME(send_start_time);
-
-	__fill_data((char *)(rpt->sbuf + sizeof(struct rpmsg_hdr)),
-					(rpt->slen - sizeof(struct rpmsg_hdr)));
-	ret = rpmsg_send(rpdev, rpt->sbuf, rpt->slen);
-	if (ret)
-		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
-
-	LOG_TIME(send_end_time);
-	nsend++;
-	bsend += rpt->slen;
-}
-
-static void rpmsg_client_var_size_cb(struct rpmsg_channel *rpdev, void *data,
-	       					int len, void *priv, u32 src)
-{
-	int ret;
-	struct rpmsg_perf *rpt = priv;
-
-#if 0
-	print_hex_dump(KERN_DEBUG, __func__, DUMP_PREFIX_NONE, 16, 1,
-		       data, len,  true);
-
-#endif
-	if (nrecv >= rpt->times) {
-		PRINT_TEST_SUMMARY();
-		return;
-	}
-
-	LOG_TIME(send_start_time);
-
-	__fill_data((char *)(rpt->sbuf + sizeof(struct rpmsg_hdr)),
-					(rpt->slen - sizeof(struct rpmsg_hdr)));
-	ret = rpmsg_send_recv(rpdev, rpt->sbuf, rpt->slen, rpt->rbuf, rpt->rlen);
-	if (ret)
-		dev_err(&rpdev->dev, "rpmsg_send_recv failed: %d\n", ret);
-
-	LOG_TIME(send_end_time);
-	nsend++;
-	bsend += rpt->slen;
-}
-
-static void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
-		 				struct rpmsg_test_args *targs)
-{
-	int ret = 0;
-	struct rpmsg_perf *rpt = &grpt;
-	struct rpmsg_channel *rpdev = rvdev->rcdev->rpdev;
-
-	INIT_STATS();
-
-	rpt->slen = targs->sbuf_size;
-	rpt->rlen = targs->rbuf_size;
-	rpt->type = targs->test_type;
-	rpt->times = targs->num_runs;
-	rpt->sbuf = vmalloc(rpt->slen);
-	rpt->rbuf = vmalloc(rpt->rlen);
-	rpt->rpdev = rpdev;
-
-	LOG_TIME(send_start_time);
-
-	switch (rpt->type) {
-		case RPMSG_FIXED_SIZE_LATENCY:
-			rpt->cb = rpmsg_client_fixed_size_cb;
-			ret = rpmsg_send(rpdev, rpt->sbuf, rpt->slen);
-			if (ret) {
-				dev_err(&rpdev->dev, "rpmsg_send failed: %d\n",
-					       	ret);
-				return NULL;
-			}
-			break;
-		case RPMSG_VAR_SIZE_LATENCY:
-			rpt->cb = rpmsg_client_var_size_cb;
-			ret = rpmsg_send_recv(rpdev, rpt->sbuf, rpt->slen,
-					 rpt->rbuf, rpt->rlen);
-			if (ret) {
-				dev_err(&rpdev->dev, "rpmsg_send_recv failed:"
-						" %d\n", ret);
-				return NULL;
-			}
-			break;
-		case RPMSG_NULL_TEST:
-		default:
-			dev_err(&rpdev->dev, "unknown rpmsg test type\n");
-			return NULL;
-	}
-	LOG_TIME(send_end_time);
-	nsend++;
-	bsend += rpt->slen;
-	return;
-}
 
 static int rpmsg_client_probe(struct rpmsg_channel *rpdev)
 {
@@ -315,20 +151,19 @@ ida_fail:
 
 static void __devexit rpmsg_client_remove(struct rpmsg_channel *rpdev)
 {
-	rpmsg_client_free_resources(&grpt); // FIXME
-	dev_info(&rpdev->dev, "rpmsg perf test driver is removed\n");
+	dev_info(&rpdev->dev, "rpmsg client driver is removed\n");
 }
 
-static struct rpmsg_device_id rpmsg_driver_sample_id_table[] = {
+static struct rpmsg_device_id rpmsg_client_driver_id_table[] = {
 	{ .name	= "lproc" },
 	{ },
 };
-MODULE_DEVICE_TABLE(rpmsg, rpmsg_driver_sample_id_table);
+MODULE_DEVICE_TABLE(rpmsg, rpmsg_client_driver_id_table);
 
 static struct rpmsg_driver rpmsg_client = {
 	.drv.name	= KBUILD_MODNAME,
 	.drv.owner	= THIS_MODULE,
-	.id_table	= rpmsg_driver_sample_id_table,
+	.id_table	= rpmsg_client_driver_id_table,
 	.probe		= rpmsg_client_probe,
 	.callback	= rpmsg_client_cb,
 	.remove		= __devexit_p(rpmsg_client_remove),
@@ -381,5 +216,5 @@ static void __exit rpmsg_client_fini(void)
 }
 module_exit(rpmsg_client_fini);
 
-MODULE_DESCRIPTION("Remote processor messaging perf test driver");
+MODULE_DESCRIPTION("Remote processor messaging client driver");
 MODULE_LICENSE("GPL v2");

@@ -104,4 +104,20 @@ struct rpmsg_test_args {
 	int rbuf_size;
 	int rpmsg_ept;
 };
+
+struct rpmsg_client_device {
+	int id;
+	void *priv;
+	struct cdev cdev;
+	struct rpmsg_channel *rpdev;
+};
+
+struct rpmsg_client_vdev {
+	struct rpmsg_client_device *rcdev;
+};
+
+void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
+		 				struct rpmsg_test_args *targs);
+void rpmsg_client_cb(struct rpmsg_channel *rpdev, void *data, int len,
+							void *priv, u32 src);
 #endif //_RPMSG_CLIENT_H
