@@ -307,7 +307,7 @@ early_initcall(dummy_lproc_init);
 static DECLARE_BITMAP(dummy_lproc_cpu_bits, CONFIG_NR_CPUS) __read_mostly;
 static struct cpumask *dummy_lproc_cpu_mask = to_cpumask(dummy_lproc_cpu_bits);
 
-void __init dummy_lproc_show_banner(void)
+void __init dummy_lproc_prepare_boot_cpu(void)
 {
 	char cpus[NR_CPUS*5];
 	int cpu = first_cpu(cpumask_bits(dummy_lproc_cpu_mask));
@@ -351,7 +351,7 @@ static int __init dummy_lproc_early_param(char *p)
 	dummy_lproc_id = 1;
 
 //	x86_init.oem.banner = dummy_lproc_show_banner;
-	smp_ops.smp_prepare_boot_cpu = dummy_lproc_show_banner;
+	smp_ops.smp_prepare_boot_cpu = dummy_lproc_prepare_boot_cpu;
 	lapic_timer_frequency = 1000000;
 
 	return 0;
