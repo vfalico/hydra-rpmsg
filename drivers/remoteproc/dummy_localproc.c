@@ -335,6 +335,11 @@ void __init dummy_lproc_prepare_boot_cpu(void)
 	current_thread_info()->cpu = cpu;  /* needed? */
 }
 
+void __init dummy_lproc_prepare_cpus(unsigned int max_cpus)
+{
+	native_smp_prepare_cpus(max_cpus);
+}
+
 extern struct smp_ops smp_ops;
 
 static int __init dummy_lproc_early_param(char *p)
@@ -352,6 +357,7 @@ static int __init dummy_lproc_early_param(char *p)
 
 //	x86_init.oem.banner = dummy_lproc_show_banner;
 	smp_ops.smp_prepare_boot_cpu = dummy_lproc_prepare_boot_cpu;
+	smp_ops.smp_prepare_cpus = dummy_lproc_prepare_cpus;
 	lapic_timer_frequency = 1000000;
 
 	return 0;
