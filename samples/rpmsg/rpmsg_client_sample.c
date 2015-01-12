@@ -40,7 +40,10 @@ static const char driver_name[] = "rpmsg_client";
 
 /* Globals */
 static struct rpmsg_client_device *rcdev;
-
+extern void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
+		 				struct rpmsg_test_args *targs);
+extern void rpmsg_client_cb(struct rpmsg_channel *rpdev, void *data, int len,
+							void *priv, u32 src);
 int rpmsg_open(struct inode *inode, struct file *f)
 {
 	struct rpmsg_client_vdev *rvdev;
@@ -51,9 +54,37 @@ int rpmsg_open(struct inode *inode, struct file *f)
 	rvdev = kmalloc(sizeof(*rvdev), GFP_KERNEL);
 	if(!rvdev)
 		return -ENOMEM;
+
 	rvdev->rcdev = rcdev;
 	f->private_data = rvdev;
+	return nonseekable_open(inode, f);;
+}
+
+static ssize_t
+rpmsg_read(struct file *f, const char __user *buf, size_t count, loff_t *ppos)
+{
 	return 0;
+}
+
+static ssize_t
+rpmsg_write(struct file *f, const char __user *buf, size_t count, loff_t *ppos)
+{
+	struct rpmsg_client_vdev *rvdev = f->private_data;
+	struct rpmsg_channel *rpdev = rvdev->rcdev->rpdev;
+	int ret;
+
+	if(count + sizeof(struct rpmsg_hdr) > 512)
+		return -EINVAL;
+
+	if (f->f_flags & O_NONBLOCK)
+		ret = rpmsg_trysend(rpdev, (void *)buf, (int)count);
+	else
+		ret = rpmsg_send(rpdev, (void *)buf, (int)count);
+
+	if(ret)
+		return ret;
+
+	return count;
 }
 
 int rpmsg_release(struct inode *inode, struct file *f)
@@ -67,6 +98,7 @@ int rpmsg_release(struct inode *inode, struct file *f)
 long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
 	struct rpmsg_client_vdev *rvdev = f->private_data;
+	struct rpmsg_channel *rpdev = rvdev->rcdev->rpdev;
 	void __user *argp = (void __user *)arg;
 	struct rpmsg_test_args *k_targs;
 
@@ -82,6 +114,22 @@ long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 			rpmsg_client_ping(rvdev, k_targs);
 			kfree(k_targs);
 			break;
+		case RPMSG_CLIENT_CREATE_EPT_IOCTL:
+		{
+			struct rpmsg_endpoint *ept;
+			unsigned long addr;
+			rpmsg_rx_cb_t cb = rpmsg_client_cb;
+
+			if(copy_from_user(addr, argp, sizeof(addr)))
+				return -EFAULT;
+			ept = rpmsg_create_ept(rpdev, cb, rvdev, addr);
+			if (!ept) {
+				dev_err(&rpdev->dev, "failed to create ept\n");
+				return -ENOMEM;
+			}
+			rvdev->src = addr;
+			rvdev->ept = ept;
+		}
 		default:
 			printk(KERN_INFO "%s cmd: %d ioctl failed\n", __func__,
 					 cmd);
@@ -93,6 +141,8 @@ long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 static const struct file_operations rpmsg_client_fops = {
 	.open = rpmsg_open,
 	.release = rpmsg_release,
+	.write = rpmsg_write,
+	.read = rpmsg_read,
 	.unlocked_ioctl = rpmsg_ioctl,
 	.owner = THIS_MODULE,
 };
@@ -138,6 +188,9 @@ static int rpmsg_client_probe(struct rpmsg_channel *rpdev)
 	rcdev->rpdev = rpdev;
 	dev_info(&rpdev->dev, "device %s%d created!\n", RPMSG_CLIENT_DEV,
 								rcdev->id);
+	INIT_LIST_HEAD(&rcdev->recvqueue);
+	init_waitqueue_head(&rcdev->recvwait);
+
 	return ret;
 
 cdevice_create_fail:

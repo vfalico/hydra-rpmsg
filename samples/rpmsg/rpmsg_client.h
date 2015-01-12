@@ -110,10 +110,21 @@ struct rpmsg_client_device {
 	void *priv;
 	struct cdev cdev;
 	struct rpmsg_channel *rpdev;
+	struct list_head recvqueue;
+	wait_queue_head_t recvwait;
 };
 
 struct rpmsg_client_vdev {
 	struct rpmsg_client_device *rcdev;
+	struct rpmsg_endpoint *ept;
+	unsigned long src;
+};
+
+struct rpmsg_recv_blk{
+	int len;
+	struct list_head list;
+	unsigned long addr;
+	unsigned short *data;
 };
 
 void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
