@@ -29,6 +29,7 @@
 #include <asm/uv/uv.h>
 #include <linux/cpu.h>
 #include <asm/cpu.h>
+#include <asm/mtrr.h>
 #include <asm/x86_init.h>
 
 #include "dummy_proc.h"
@@ -337,7 +338,66 @@ void __init dummy_lproc_prepare_boot_cpu(void)
 
 void __init dummy_lproc_prepare_cpus(unsigned int max_cpus)
 {
-	native_smp_prepare_cpus(max_cpus);
+	unsigned int i, cpu = first_cpu(cpumask_bits(dummy_lproc_cpu_mask));
+	struct cpuinfo_x86 *c = &cpu_data(cpu);
+
+	*c = boot_cpu_data;
+
+	for_each_possible_cpu(i) {
+		c = &cpu_data(i);
+		c->cpu_index = i;
+	}
+
+	/*
+	 * Setup boot CPU information
+	 */
+	cpumask_copy(cpu_callin_mask, cpumask_of(cpu));
+	mb();
+
+	current_thread_info()->cpu = cpu;  /* needed? */
+	for_each_possible_cpu(i) {
+		zalloc_cpumask_var(&per_cpu(cpu_sibling_map, i), GFP_KERNEL);
+		zalloc_cpumask_var(&per_cpu(cpu_core_map, i), GFP_KERNEL);
+		zalloc_cpumask_var(&per_cpu(cpu_llc_shared_map, i), GFP_KERNEL);
+	}
+	set_cpu_sibling_map(cpu);
+
+	default_setup_apic_routing();
+
+	if (read_apic_id() != boot_cpu_physical_apicid) {
+		panic("Boot APIC ID in local APIC unexpected (%d vs %d)",
+		     read_apic_id(), boot_cpu_physical_apicid);
+		/* Or can we switch back to PIC here? */
+	}
+
+	connect_bsp_APIC();
+
+	/*
+	 * Switch from PIC to APIC mode.
+	 */
+	setup_local_APIC();
+
+	/*
+	 * Enable IO APIC before setting up error vector
+	 */
+	if (!skip_ioapic_setup && nr_ioapics)
+		enable_IO_APIC();
+
+	bsp_end_local_APIC_setup();
+	smpboot_setup_io_apic();
+	/*
+	 * Set up local APIC timer on boot CPU.
+	 */
+
+	pr_info("CPU%d: ", cpu);
+	print_cpu_info(&cpu_data(cpu));
+	printk(KERN_ERR "cpu id %d\n", (&cpu_data(cpu))->cpu_index);
+	x86_init.timers.setup_percpu_clockev();
+
+	if (is_uv_system())
+		uv_system_init();
+
+	set_mtrr_aps_delayed_init();
 }
 
 extern struct smp_ops smp_ops;
