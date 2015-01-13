@@ -6,4 +6,8 @@ config RPMSG
 	select VIRTIO
 	select VIRTUALIZATION
 
+# RPMSG always gets selected by whoever wants it
+config RPMSG_CLIENT
+	tristate "Dummy rpmsg client driver for testing rpmsg -- loadable module" 
+	depends on RPMSG && m
 endmenu

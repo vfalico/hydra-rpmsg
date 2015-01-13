@@ -70,7 +70,7 @@ void rpmsg_client_cb(struct rpmsg_channel *rpdev, void *data, int len,
 
 	rpt->cb(rpdev, data, len, (void *)rpt, src);
 }
-EXPORT_SYMBOL_GPL(rpmsg_client_cb);
+//EXPORT_SYMBOL_GPL(rpmsg_client_cb);
 static void rpmsg_client_fixed_size_cb(struct rpmsg_channel *rpdev, void *data,
 	       					int len, void *priv, u32 src)
 {
@@ -180,4 +180,4 @@ void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
 	bsend += rpt->slen;
 	return;
 }
-EXPORT_SYMBOL_GPL(rpmsg_client_ping);
+//EXPORT_SYMBOL_GPL(rpmsg_client_ping);
