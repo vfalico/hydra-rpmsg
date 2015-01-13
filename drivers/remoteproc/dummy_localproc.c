@@ -377,21 +377,10 @@ void __init dummy_lproc_prepare_cpus(unsigned int max_cpus)
 	 */
 	setup_local_APIC();
 
-	/*
-	 * Enable IO APIC before setting up error vector
-	 */
-	if (!skip_ioapic_setup && nr_ioapics)
-		enable_IO_APIC();
-
 	bsp_end_local_APIC_setup();
-	smpboot_setup_io_apic();
-	/*
-	 * Set up local APIC timer on boot CPU.
-	 */
 
 	pr_info("CPU%d: ", cpu);
 	print_cpu_info(&cpu_data(cpu));
-	printk(KERN_ERR "cpu id %d\n", (&cpu_data(cpu))->cpu_index);
 	x86_init.timers.setup_percpu_clockev();
 
 	if (is_uv_system())
