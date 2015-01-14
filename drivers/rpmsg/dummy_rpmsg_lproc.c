@@ -47,7 +47,7 @@ static void dummy_rpmsg_cb(struct rpmsg_channel *rpdev, void *data, int len,
 	int ret;
 
 	len = snprintf(buf, MSG_SIZE, "Reply from lproc %u",++reply_cnt);
-	ret = rpmsg_sendto(rpdev, buf, MSG_SIZE, src);
+	ret = rpmsg_sendto(rpdev, buf, len, src);
 	if(ret)
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
 }

@@ -12,11 +12,20 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
-#include "rpmsg_client.h"
 #include "rpmsg_client_ioctl.h"
 
 #define DEV_NAME	"/dev/crpmsg"
 #define PATH_MAX	80
+
+struct rpmsg_test_args {
+	int remote_cpu;
+	int test_type;
+	int num_runs;
+	int sbuf_size;
+	int rbuf_size;
+	int rpmsg_ept;
+};
+
 
 static void print_usage(void)
 {
@@ -85,27 +94,41 @@ static struct rpmsg_test_args *rpmsg_get_test_args(int argc, char *argv[])
 	return targs;
 }
 
+#define MSG_SIZE	256
+
 int main(int argc, char *argv[])
 {
 	char path[PATH_MAX];
 	int fd, ret, id = 0;
 	struct rpmsg_test_args *targs;
-
+	char str[MSG_SIZE];
+#if 0
 	targs = rpmsg_get_test_args(argc, argv);
 
 	rpmsg_validate_test_args(targs);
-
+#endif
 	snprintf(path, PATH_MAX, DEV_NAME"%d", id);
 	fd = open(path, O_RDWR);
 	if (fd < 0) {
 		printf("Could not open %s %s\n", path, strerror(errno));
 		return;
 	}
-
+#if 0
 	ret = ioctl(fd, RPMSG_CLIENT_TEST_IOCTL, (void *)targs);
 	if (ret < 0) {
 		printf(" IOCTL failed %s %s\n", path, strerror(errno));
 		return;
 	}
+#endif
+	if (write(fd, str, MSG_SIZE) < MSG_SIZE){
+		printf("Could not write to %s %s\n", path, strerror(errno));
+		return;
+	}
+
+	if (read(fd, str, MSG_SIZE) < 0){
+		printf("Could not read from %s %s\n", path, strerror(errno));
+		return;
+	}
+	printf("%s\n",str);
 }
 

@@ -111,6 +111,7 @@ struct rpmsg_client_device {
 	struct cdev cdev;
 	struct rpmsg_channel *rpdev;
 	struct list_head recvqueue;
+	spinlock_t recv_spinlock;
 	wait_queue_head_t recvwait;
 };
 
@@ -122,13 +123,14 @@ struct rpmsg_client_vdev {
 
 struct rpmsg_recv_blk{
 	int len;
-	struct list_head list;
+	void  *priv;
 	unsigned long addr;
-	unsigned short *data;
+	unsigned char *data;
+	struct list_head link;
 };
 
 void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
 		 				struct rpmsg_test_args *targs);
-void rpmsg_client_cb(struct rpmsg_channel *rpdev, void *data, int len,
+void rpmsg_ping_cb(struct rpmsg_channel *rpdev, void *data, int len,
 							void *priv, u32 src);
 #endif //_RPMSG_CLIENT_H

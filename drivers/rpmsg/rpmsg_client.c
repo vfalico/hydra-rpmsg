@@ -23,6 +23,9 @@
 #include <linux/idr.h>
 #include <linux/slab.h>
 #include <asm/uaccess.h>
+#include <linux/list.h>
+#include <linux/sched.h>
+#include <linux/wait.h>
 #include "rpmsg_client_ioctl.h"
 #include "rpmsg_client.h"
 
@@ -40,17 +43,13 @@ static const char driver_name[] = "rpmsg_client";
 
 /* Globals */
 static struct rpmsg_client_device *rcdev;
-extern void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
-		 				struct rpmsg_test_args *targs);
-extern void rpmsg_client_cb(struct rpmsg_channel *rpdev, void *data, int len,
-							void *priv, u32 src);
+
 int rpmsg_open(struct inode *inode, struct file *f)
 {
 	struct rpmsg_client_vdev *rvdev;
 	struct rpmsg_client_device *rcdev = container_of(inode->i_cdev,
 			 struct rpmsg_client_device, cdev);
 
-	printk(KERN_INFO "%s\n",__func__);
 	rvdev = kmalloc(sizeof(*rvdev), GFP_KERNEL);
 	if(!rvdev)
 		return -ENOMEM;
@@ -60,10 +59,74 @@ int rpmsg_open(struct inode *inode, struct file *f)
 	return nonseekable_open(inode, f);;
 }
 
+static inline void rpmsg_queue(struct rpmsg_recv_blk *rblk,
+						 struct list_head *queue)
+{
+	struct rpmsg_client_device *rcdev = container_of(queue,
+					struct rpmsg_client_device, recvqueue);
+	unsigned long flags;
+
+	BUG_ON(!rcdev);
+	BUG_ON(!rblk);
+	spin_lock_irqsave(&rcdev->recv_spinlock, flags);
+	list_add_tail(&rblk->link, &rcdev->recvqueue);
+	spin_unlock_irqrestore(&rcdev->recv_spinlock, flags);
+}
+
+static inline struct rpsmg_recv_blk * rpmsg_dequeue(struct list_head *queue)
+{
+	struct rpmsg_client_device *rcdev = container_of(queue,
+					struct rpmsg_client_device, recvqueue);
+	struct rpmsg_recv_blk *rblk = NULL;
+	unsigned long flags;
+
+	BUG_ON(!rcdev);
+	spin_lock_irqsave(&rcdev->recv_spinlock, flags);
+	if(!list_empty(&rcdev->recvqueue)) {
+			rblk = list_first_entry(&rcdev->recvqueue,
+					struct rpmsg_recv_blk, link);
+			list_del(&rblk->link);
+	}
+	spin_unlock_irqrestore(&rcdev->recv_spinlock, flags);
+	return rblk;
+}
+
 static ssize_t
 rpmsg_read(struct file *f, const char __user *buf, size_t count, loff_t *ppos)
 {
-	return 0;
+	struct rpmsg_client_vdev *rvdev = f->private_data;
+	struct rpmsg_client_device *rcdev = rvdev->rcdev;
+	struct rpmsg_channel *rpdev = rcdev->rpdev;
+	struct rpmsg_recv_blk *rblk;
+	int ret, copied;
+
+	dev_info(&rpdev->dev, "%s: entry\n",__func__);
+	rblk = rpmsg_dequeue(&rcdev->recvqueue);
+	if (!rblk) {
+		if (f->f_flags & O_NONBLOCK)
+			return -EAGAIN;
+		ret = wait_event_interruptible(rcdev->recvwait,
+				(rblk = rpmsg_dequeue(&rcdev->recvqueue)));
+		if (ret)
+			return ret;
+	}
+	dev_info(&rpdev->dev, "%s: %d bytes from 0x%x ",__func__, rblk->len,
+			rblk->addr);
+	if(rblk->len > count) {
+		dev_err(&rpdev->dev, "%s: packet too big %d > %d\n",__func__,
+							rblk->len, count);
+		kfree(rblk);
+		return -EMSGSIZE;
+	}
+	if(copy_to_user(buf, rblk->data, rblk->len)){
+		dev_err(&rpdev->dev, "%s: failed to copy usr=%p ker=%p\n",
+						__func__, buf, rblk->data);
+		kfree(rblk);
+		return -EFAULT;
+	}
+	copied = rblk->len;
+	kfree(rblk);
+	return copied;
 }
 
 static ssize_t
@@ -93,6 +156,26 @@ int rpmsg_release(struct inode *inode, struct file *f)
 	printk(KERN_INFO "%s\n",__func__);
 	kfree(rvdev);
 	return 0;
+}
+
+void rpmsg_client_cb(struct rpmsg_channel *rpdev, void *data, int len,
+							void *priv, u32 src)
+{
+	struct rpmsg_recv_blk *rblk;
+
+	dev_info(&rpdev->dev, "%s: %d bytes from 0x%x",__func__, len, src);
+
+	rblk = kmalloc(sizeof(*rblk), GFP_ATOMIC);
+	if (!rblk) {
+		dev_err(&rpdev->dev, "kmalloc failed!\n");
+		return;
+	}
+	rblk->addr = src;
+	rblk->priv = priv;
+	rblk->len = len;
+	rblk->data = data;
+	rpmsg_queue(rblk, &rcdev->recvqueue);
+	wake_up_interruptible(&rcdev->recvwait);
 }
 
 long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
@@ -190,7 +273,7 @@ static int rpmsg_client_probe(struct rpmsg_channel *rpdev)
 								rcdev->id);
 	INIT_LIST_HEAD(&rcdev->recvqueue);
 	init_waitqueue_head(&rcdev->recvwait);
-
+	spin_lock_init(&rcdev->recv_spinlock);
 	return ret;
 
 cdevice_create_fail:
