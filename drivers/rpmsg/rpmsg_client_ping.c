@@ -23,6 +23,8 @@
 #include <linux/idr.h>
 #include <linux/slab.h>
 #include <asm/uaccess.h>
+#include <linux/sched.h>
+#include <linux/wait.h>
 #include "rpmsg_client_ioctl.h"
 #include "rpmsg_client.h"
 
@@ -32,6 +34,8 @@ struct rpmsg_perf {
 	int rlen;
 	int slen;
 	int times;
+	int state;
+	int wait;
 	enum rpmsg_ptest type;
 	struct rpmsg_channel *rpdev;
 	void (*cb)(struct rpmsg_channel *rpdev, void *data, int len,
@@ -46,17 +50,28 @@ static void inline __fill_data(char *buf, int len)
 	memset(buf, 'a', len);
 }
 
-static void rpmsg_ping_cleanup(struct rpmsg_perf *rpt)
+int inline rpmsg_ping_status(struct rpmsg_client_vdev *rvdev)
 {
-	vfree(rpt->rbuf);
-	vfree(rpt->sbuf);
+	struct rpmsg_perf *rpt;
+
+	rpt = rvdev->priv;
+
+	if(!rpt) return 0;
+
+	if (rpt->state){
+		if(rpt->rbuf){ vfree(rpt->rbuf); rpt->rbuf = NULL; }
+		if(rpt->sbuf){ vfree(rpt->sbuf); rpt->sbuf = NULL; }
+	}
+
+	return rpt->state;
 }
 
 void rpmsg_ping_cb(struct rpmsg_channel *rpdev, void *data, int len,
 						void *priv, u32 src)
 {
 	s64 t;
-	struct rpmsg_perf *rpt = &grpt; // later we should use priv for this.
+	struct rpmsg_client_vdev *rvdev = priv;
+	struct rpmsg_perf *rpt = rvdev->priv;
 
 	LOG_TIME(recv_end_time);
 
@@ -68,14 +83,15 @@ void rpmsg_ping_cb(struct rpmsg_channel *rpdev, void *data, int len,
 	dev_info(&rpdev->dev, "%d bytes from 0x%x seq=%d t= %ld rtt=%ld us\n",
 			len, src, nrecv, t, triptime);
 
-	rpt->cb(rpdev, data, len, (void *)rpt, src);
+	rpt->cb(rpdev, data, len, priv, src);
 }
 
 static void rpmsg_client_fixed_size_cb(struct rpmsg_channel *rpdev, void *data,
 	       					int len, void *priv, u32 src)
 {
 	int ret;
-	struct rpmsg_perf *rpt = priv;
+	struct rpmsg_client_vdev *rvdev = priv;
+	struct rpmsg_perf *rpt = rvdev->priv;
 
 #if 0
 	print_hex_dump(KERN_DEBUG, __func__, DUMP_PREFIX_NONE, 16, 1,
@@ -83,7 +99,8 @@ static void rpmsg_client_fixed_size_cb(struct rpmsg_channel *rpdev, void *data,
 #endif
 	if (nrecv >= rpt->times) {
 		PRINT_TEST_SUMMARY();
-		rpmsg_ping_cleanup(rpt);
+		rpt->state = 1;
+		if (rpt->wait) wake_up_interruptible(&rvdev->client_wait);
 		return;
 	}
 
@@ -91,7 +108,11 @@ static void rpmsg_client_fixed_size_cb(struct rpmsg_channel *rpdev, void *data,
 
 	__fill_data((char *)(rpt->sbuf + sizeof(struct rpmsg_hdr)),
 					(rpt->slen - sizeof(struct rpmsg_hdr)));
-	ret = rpmsg_send(rpdev, rpt->sbuf, rpt->slen);
+	if (rvdev->src)
+		ret = rpmsg_send_offchannel(rpdev, rvdev->src,
+					rpdev->dst, rpt->sbuf, rpt->slen);
+	else
+		ret = rpmsg_send(rpdev, rpt->sbuf, rpt->slen);
 	if (ret)
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
 
@@ -104,7 +125,8 @@ static void rpmsg_client_var_size_cb(struct rpmsg_channel *rpdev, void *data,
 	       					int len, void *priv, u32 src)
 {
 	int ret;
-	struct rpmsg_perf *rpt = priv;
+	struct rpmsg_client_vdev *rvdev = priv;
+	struct rpmsg_perf *rpt = rvdev->priv;
 
 #if 0
 	print_hex_dump(KERN_DEBUG, __func__, DUMP_PREFIX_NONE, 16, 1,
@@ -113,7 +135,8 @@ static void rpmsg_client_var_size_cb(struct rpmsg_channel *rpdev, void *data,
 #endif
 	if (nrecv >= rpt->times) {
 		PRINT_TEST_SUMMARY();
-		rpmsg_ping_cleanup(rpt);
+		rpt->state = 1;
+		if (rpt->wait) wake_up_interruptible(&rvdev->client_wait);
 		return;
 	}
 
@@ -121,7 +144,13 @@ static void rpmsg_client_var_size_cb(struct rpmsg_channel *rpdev, void *data,
 
 	__fill_data((char *)(rpt->sbuf + sizeof(struct rpmsg_hdr)),
 					(rpt->slen - sizeof(struct rpmsg_hdr)));
-	ret = rpmsg_send_recv(rpdev, rpt->sbuf, rpt->slen, rpt->rbuf, rpt->rlen);
+	if (rvdev->src)
+		ret = rpmsg_send_recv_offchannel(rpdev, rvdev->src,
+						rpdev->dst, rpt->sbuf, rpt->slen,
+						rpt->rbuf, rpt->rlen);
+	else
+		ret = rpmsg_send_recv(rpdev, rpt->sbuf, rpt->slen, rpt->rbuf,
+				rpt->rlen);
 	if (ret)
 		dev_err(&rpdev->dev, "rpmsg_send_recv failed: %d\n", ret);
 
@@ -143,7 +172,10 @@ void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
 	rpt->rlen = targs->rbuf_size;
 	rpt->type = targs->test_type;
 	rpt->times = targs->num_runs;
+	rpt->wait = targs->wait;
 	rpt->rpdev = rpdev;
+	rpt->state = 0;
+	rvdev->priv = (void *)rpt;
 
 	rpt->sbuf = vmalloc(rpt->slen);
 	rpt->rbuf = vmalloc(rpt->rlen);
@@ -153,7 +185,11 @@ void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
 	switch (rpt->type) {
 		case RPMSG_FIXED_SIZE_LATENCY:
 			rpt->cb = rpmsg_client_fixed_size_cb;
-			ret = rpmsg_send(rpdev, rpt->sbuf, rpt->slen);
+			if (rvdev->src)
+				ret = rpmsg_send_offchannel(rpdev, rvdev->src,
+						rpdev->dst, rpt->sbuf, rpt->slen);
+			else
+				ret = rpmsg_send(rpdev, rpt->sbuf, rpt->slen);
 			if (ret) {
 				dev_err(&rpdev->dev, "rpmsg_send failed: %d\n",
 					       	ret);
@@ -162,7 +198,12 @@ void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
 			break;
 		case RPMSG_VAR_SIZE_LATENCY:
 			rpt->cb = rpmsg_client_var_size_cb;
-			ret = rpmsg_send_recv(rpdev, rpt->sbuf, rpt->slen,
+			if (rvdev->src)
+				ret = rpmsg_send_recv_offchannel(rpdev, rvdev->src,
+						rpdev->dst, rpt->sbuf, rpt->slen,
+						rpt->rbuf, rpt->rlen);
+			else
+				ret = rpmsg_send_recv(rpdev, rpt->sbuf, rpt->slen,
 					 rpt->rbuf, rpt->rlen);
 			if (ret) {
 				dev_err(&rpdev->dev, "rpmsg_send_recv failed:"

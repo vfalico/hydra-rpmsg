@@ -920,13 +920,14 @@ struct device *rpmsg_setup_ring_attr(struct virtio_device *vdev,
 	}
 	return parent;
 }
+
 static int rpmsg_probe(struct virtio_device *vdev)
 {
 	vq_callback_t *vq_cbs[3];
 	const char *names[3];
 	struct virtqueue *vqs[3];
 	struct virtproc_info *vrp;
-	struct device *dev_parent;
+	struct device *parent_dev;
 	void *bufs_va = NULL;
 	int err = 0, i;
 	size_t total_buf_space;
@@ -943,7 +944,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	mutex_init(&vrp->tx_lock);
 	init_waitqueue_head(&vrp->sendq);
 
-	dev_parent = rpmsg_setup_ring_attr(vdev, &is_bsp, vq_cbs, names);
+	parent_dev = rpmsg_setup_ring_attr(vdev, &is_bsp, vq_cbs, names);
 
 	/* We expect three virtqueues, rx, tx and var (and in this order) */
 	err = vdev->config->find_vqs(vdev, 3, vqs, vq_cbs, names);
@@ -957,7 +958,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	vrp->vvq = vqs[2];
 
 	/* allocate coherent memory for the buffers */
-	bufs_va = dma_alloc_coherent(dev_parent,
+	bufs_va = dma_alloc_coherent(parent_dev,
 				RPMSG_TOTAL_BUF_SPACE,
 				&vrp->bufs_dma, GFP_KERNEL);
 	if (!bufs_va) {
@@ -1030,7 +1031,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	return 0;
 
 free_coherent:
-	dma_free_coherent(dev_parent, RPMSG_TOTAL_BUF_SPACE,
+	dma_free_coherent(parent_dev, RPMSG_TOTAL_BUF_SPACE,
 					bufs_va, vrp->bufs_dma);
 vqs_del:
 	vdev->config->del_vqs(vrp->vdev);

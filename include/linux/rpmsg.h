@@ -97,6 +97,24 @@ enum rpmsg_ns_flags {
 
 struct virtproc_info;
 
+#define CONFIG_RPMSG_V2		1
+#ifdef CONFIG_RPMSG_V2
+/**
+ * enum rpmsg_ptype - rpmsg transport protocol types
+ *
+ * @RPMSG_PTYPE_DMA: DMA the data to remote processor.
+ * @RPMSG_PTYPE_RDMA: RDMA the data to remote processor.
+ * @RPMSG_PTYPE_SHM: Share memory transport.
+ * @RPMSG_PTYPE_ZERO_COPY: Zero Copy transport.
+ */
+enum rpmsg_ptype {
+	RPMSG_PTYPE_NULL,
+	RPMSG_PTYPE_SHM,
+	RPMSG_PTYPE_DMA,
+	RPMSG_PTYPE_RDMA,
+	RPMSG_PTYPE_ZERO_COPY,
+};
+#endif
 /**
  * rpmsg_channel - devices that belong to the rpmsg bus are called channels
  * @vrp: the remote processor this channel belongs to
@@ -105,6 +123,7 @@ struct virtproc_info;
  * @src: local address
  * @dst: destination address
  * @ept: the rpmsg endpoint of this channel
+ * @ptype: the transport protocol type SHMEM/Zero Copy/DMA/RDMA (future)
  * @announce: if set, rpmsg will announce the creation/removal of this channel
  */
 struct rpmsg_channel {
@@ -114,6 +133,9 @@ struct rpmsg_channel {
 	unsigned long src;
 	unsigned long dst;
 	struct rpmsg_endpoint *ept;
+#ifdef CONFIG_RPMSG_V2
+	unsigned char ptype;
+#endif
 	bool announce;
 };
 
@@ -332,6 +354,7 @@ rpmsg_trysend_offchannel(struct rpmsg_channel *rpdev, unsigned long src,
 	return rpmsg_send_offchannel_raw(rpdev, src, dst, data, len, false);
 }
 
+#ifdef CONFIG_RPMSG_V2
 /**
  * rpmsg_send_recv() - send a variable size message of size slen across to the
  * remote processor and sets up a recv buffer of size rlen for the processor's
@@ -359,5 +382,31 @@ static inline int rpmsg_send_recv(struct rpmsg_channel *rpdev, void *sdata,
 	return rpmsg_send_recv_raw(rpdev, src, dst, sdata, slen, rdata, rlen,
 			false);
 }
-
+/**
+ * rpmsg_send_recv_offchannel() - send a variable size message of size slen across to the
+ * remote processor and sets up a recv buffer of size rlen for the processor's
+ * reply. Once the reply arrives, it will be available in the rdata.
+ * @rpdev: the rpmsg channel
+ * @sdata: payload of message to be send
+ * @slen: length of payload
+ * @rdata: recv buffer for reply from remote processor
+ * @rlen: length of payload
+ *
+ * This function sends a variable size message of size slen across to the
+ * remote processor and sets up a recv buffer of size rlen for the processor's
+ * reply. Once the reply arrives, it will be available in the rdata and will be
+ * notified to the sender via callback
+ *
+ * Can only be called from process context (for now).
+ *
+ * Returns 0 on success and an appropriate error value on failure.
+ */
+static inline int rpmsg_send_recv_offchannel(struct rpmsg_channel *rpdev,
+		unsigned long src, unsigned long dst, void *sdata,
+		int slen, void *rdata, int rlen)
+{
+	return rpmsg_send_recv_raw(rpdev, src, dst, sdata, slen, rdata, rlen,
+			false);
+}
+#endif
 #endif /* _LINUX_RPMSG_H */

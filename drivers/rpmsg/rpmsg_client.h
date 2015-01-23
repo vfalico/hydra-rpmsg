@@ -103,6 +103,7 @@ struct rpmsg_test_args {
 	int sbuf_size;
 	int rbuf_size;
 	int rpmsg_ept;
+	int wait;
 };
 
 struct rpmsg_client_device {
@@ -116,9 +117,11 @@ struct rpmsg_client_device {
 };
 
 struct rpmsg_client_vdev {
+	unsigned long src;
+	void *priv;
 	struct rpmsg_client_device *rcdev;
 	struct rpmsg_endpoint *ept;
-	unsigned long src;
+	wait_queue_head_t client_wait;
 };
 
 struct rpmsg_recv_blk{
@@ -133,4 +136,5 @@ void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
 		 				struct rpmsg_test_args *targs);
 void rpmsg_ping_cb(struct rpmsg_channel *rpdev, void *data, int len,
 							void *priv, u32 src);
+int rpmsg_ping_status(rvdev);
 #endif //_RPMSG_CLIENT_H

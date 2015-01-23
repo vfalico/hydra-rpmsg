@@ -50,7 +50,7 @@ int rpmsg_open(struct inode *inode, struct file *f)
 	struct rpmsg_client_device *rcdev = container_of(inode->i_cdev,
 			 struct rpmsg_client_device, cdev);
 
-	rvdev = kmalloc(sizeof(*rvdev), GFP_KERNEL);
+	rvdev = kzalloc(sizeof(*rvdev), GFP_KERNEL);
 	if(!rvdev)
 		return -ENOMEM;
 
@@ -153,8 +153,11 @@ rpmsg_write(struct file *f, const char __user *buf, size_t count, loff_t *ppos)
 int rpmsg_release(struct inode *inode, struct file *f)
 {
 	struct rpmsg_client_vdev *rvdev = f->private_data;
-	printk(KERN_INFO "%s\n",__func__);
+
+	rpmsg_ping_status(rvdev);
+	if(rvdev->ept) rpmsg_destroy_ept(rvdev->ept);
 	kfree(rvdev);
+	printk(KERN_INFO "%s done\n",__func__);
 	return 0;
 }
 
@@ -184,6 +187,7 @@ long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 	struct rpmsg_channel *rpdev = rvdev->rcdev->rpdev;
 	void __user *argp = (void __user *)arg;
 	struct rpmsg_test_args *k_targs;
+	int ret, done;
 
 	switch (cmd) {
 		case RPMSG_CLIENT_TEST_IOCTL:
@@ -194,17 +198,26 @@ long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 			if (copy_from_user(k_targs, argp, sizeof(*k_targs)))
 				return -EFAULT;
 
+			init_waitqueue_head(&rvdev->client_wait);
+
 			rpmsg_client_ping(rvdev, k_targs);
+			if(k_targs->wait) {
+				ret = wait_event_interruptible(rvdev->client_wait,
+					(done = rpmsg_ping_status(rvdev)));
+				if (ret)
+					return ret;
+			}
 			kfree(k_targs);
 			break;
 		case RPMSG_CLIENT_CREATE_EPT_IOCTL:
 		{
 			struct rpmsg_endpoint *ept;
-			unsigned long addr;
-			rpmsg_rx_cb_t cb = rpmsg_client_cb;
+			unsigned long addr = arg;
+			rpmsg_rx_cb_t cb = rpmsg_ping_cb;
 
-			if(copy_from_user(addr, argp, sizeof(addr)))
-				return -EFAULT;
+			printk(KERN_INFO "%s create_ept cmd=%d ept_addr=%lu\n",
+					__func__, cmd, addr);
+
 			ept = rpmsg_create_ept(rpdev, cb, rvdev, addr);
 			if (!ept) {
 				dev_err(&rpdev->dev, "failed to create ept\n");
@@ -212,6 +225,22 @@ long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 			}
 			rvdev->src = addr;
 			rvdev->ept = ept;
+			ept->priv = rvdev;
+			printk(KERN_INFO "%s create_ept ept_addr=%d ept=%p\n",
+					__func__, rvdev->src, rvdev->ept);
+			break;
+		}
+		case RPMSG_CLIENT_DESTROY_EPT_IOCTL:
+		{
+			unsigned long addr = arg;
+
+			printk(KERN_INFO "%s delete_ept cmd=%d ept_addr=%lu\n",
+					__func__, cmd, addr);
+
+			rpmsg_destroy_ept(rvdev->ept);
+			rvdev->src = 0;
+			rvdev->ept = NULL;
+			break;
 		}
 		default:
 			printk(KERN_INFO "%s cmd: %d ioctl failed\n", __func__,
