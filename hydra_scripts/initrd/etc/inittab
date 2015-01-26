@@ -1,0 +1,6 @@
+# /etc/inittab
+
+::sysinit:/linuxrc
+
+::respawn:-/bin/sh
+#ttyS1::respawn:-/bin/sh
