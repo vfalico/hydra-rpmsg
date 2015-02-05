@@ -136,6 +136,8 @@ void rpmsg_dummy_ap_var_size_recv_work(struct virtproc_info *vrp)
 		return;
 	}
 
+	__debug_dump_rpmsg_req(vrp, NULL, NULL,out, in, piov, out+in);
+
 	ret = rpmsg_phy_to_virt_iov(vrp, piov, viov, out + in, false);
 	if(ret < 0) {
 		dev_err(dev, "rpmsg_phy_to_virt_iov failed\n");

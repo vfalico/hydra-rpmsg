@@ -96,7 +96,7 @@ static void dummy_handle_pci_handover(struct rproc *rproc, char *cmdline)
 static void dummy_handle_mem_regions(struct rproc *rproc, char *cmdline)
 {
 	struct rproc_mem_entry *carveout;
-	char mem_regs_str[256] = "cma=8M@0x3000000 memmap=exactmap memmap=640K@0 lpj=3332540 ";
+	char mem_regs_str[256] = "cma=0@0 memmap=exactmap memmap=640K@0 ";
 
 	list_for_each_entry(carveout, &rproc->carveouts, node) {
 		sprintf(mem_regs_str + strlen(mem_regs_str), "memmap=%d@0x%p ",

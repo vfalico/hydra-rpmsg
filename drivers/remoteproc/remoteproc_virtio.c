@@ -254,7 +254,8 @@ static void rproc_virtio_get(struct virtio_device *vdev, unsigned offset,
 		dev_err(&vdev->dev, "rproc_virtio_get: access out of bounds\n");
 		return;
 	}
-
+	dev_info(&vdev->dev, "%s: offset %d table_ptr %p rsc %p, cfg %p\n",
+			__func__, offset, rvdev->rproc->table_ptr, rsc, cfg);
 	memcpy(buf, cfg + offset, len);
 }
 
@@ -273,6 +274,8 @@ static void rproc_virtio_set(struct virtio_device *vdev, unsigned offset,
 		return;
 	}
 
+	dev_info(&vdev->dev, "%s: offset %d table_ptr %p rsc %p, cfg %p\n",
+			__func__, offset, rvdev->rproc->table_ptr, rsc, cfg);
 	memcpy(cfg + offset, buf, len);
 }
 

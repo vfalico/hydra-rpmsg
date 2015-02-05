@@ -42,6 +42,7 @@ struct rpmsg_dma_pool {
  * @svq:	tx virtqueue
  * @rbufs:	kernel address of rx buffers
  * @sbufs:	kernel address of tx buffers
+ * @num_bufs:   total number of buffers for rx and tx
  * @last_sbuf:	index of last tx buffer used
  * @bufs_dma:	dma base addr of the buffers
  * @tx_lock:	protects svq, sbufs and sleepers, to allow concurrent senders.
@@ -53,6 +54,7 @@ struct rpmsg_dma_pool {
  * @sleepers:	number of senders that are waiting for a tx buffer
  * @ns_ept:	the bus's name service endpoint
  * @config_work: Process context for virtio config space updates.
+ * TODO: Add comments
  *
  * This structure stores the rpmsg state of a given virtio remote processor
  * device (there might be several virtio proc devices for each physical
@@ -62,6 +64,7 @@ struct virtproc_info {
 	struct virtio_device *vdev;
 	struct virtqueue *rvq, *svq, *vvq;
 	void *rbufs, *sbufs;
+	unsigned int num_bufs;
 	int last_sbuf;
 	dma_addr_t bufs_dma;
 	struct mutex tx_lock;
@@ -75,6 +78,7 @@ struct virtproc_info {
 	struct iovec piov[RPMSG_MAX_IOV_SIZE];
 	struct iovec viov[RPMSG_MAX_IOV_SIZE];
 	struct rpmsg_dma_pool *dma_mem_pool;
+	bool is_bsp;
 };
 
 /**
@@ -148,9 +152,8 @@ struct rpmsg_req {
  * can change this without changing anything in the firmware of the remote
  * processor.
  */
-#define RPMSG_NUM_BUFS		(512)
+#define MAX_RPMSG_NUM_BUFS	(512)
 #define RPMSG_BUF_SIZE		(512)
-#define RPMSG_TOTAL_BUF_SPACE	(RPMSG_NUM_BUFS * RPMSG_BUF_SIZE)
 
 /*
  * Local addresses are dynamically allocated on-demand.
@@ -166,13 +169,10 @@ void rpmsg_virtio_cfg_changed(struct virtproc_info *vrp);
 void rpmsg_setup_recv_buf(struct virtproc_info *vrp, unsigned len);
 void rpmsg_virtio_cfg_changed_work(struct work_struct *work);
 int rpmsg_map_remote_bufs(struct virtproc_info *vrp);
-
+int rpmsg_map_fixed_buf_pool(struct virtproc_info *vrp, size_t total_buf_space);
 void *get_a_fixed_size_tx_buf(struct virtproc_info *vrp, u16 *idx);
-struct device *rpmsg_setup_ring_attr(struct virtio_device *vdev,
-		bool *is_bsp, vq_callback_t *vq_cbs[], const char *names[]);
 void rpmsg_virtio_var_size_msg_work(struct work_struct *work);
 void rpmsg_var_recv_done(struct virtqueue *vvq);
-
 int rpmsg_phy_to_virt_iov(struct virtproc_info *vrp, struct iovec piov[],
 				struct iovec viov[], int iov_size, bool ptov);
 int rpmsg_iounmap_iov(struct iovec iov[], int iov_size, bool ptov);
@@ -183,6 +183,9 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *out, int *in,
 void virtqueue_update_used_idx(struct virtqueue *_vq, u16 used_idx,
 		int len);
 void __debug_virtqueue(struct virtqueue *_vq, char *fmt);
+void __debug_dump_rpmsg_req(struct virtproc_info *vrp, struct rpmsg_req *req,
+				struct scatterlist *sg, int out, int in,
+				struct iovec iov[],int iov_count);
 
 /* dummy routines for rpmsg lproc part */
 void create_dummy_channel_addr(struct rpmsg_channel_info *chinfo);

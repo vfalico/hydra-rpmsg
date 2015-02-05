@@ -61,7 +61,7 @@ static unsigned int inline fln2(unsigned int val)
 	v++;
 	return v;
 }
-
+#if 0
 /*
  * Function will return the round up value of power of 2.
  */
@@ -74,7 +74,7 @@ static unsigned int flp2 (unsigned int x)
 	x = x | (x >> 16);
 	return x - (x >> 1);
 }
-
+#endif
 /*
  * This function finds the best fit pool packet sizes needed to DMA the
  * requested buffer to remote size. Function will can work as a first fit

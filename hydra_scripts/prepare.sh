@@ -4,7 +4,7 @@
 
 ./make_ap.sh
 ./make_tun.sh
-./make_initrd.sh
+sudo ./make_initrd.sh
 ./make_bsp.sh
 
 echo "everything created, BSP vmlinux built"

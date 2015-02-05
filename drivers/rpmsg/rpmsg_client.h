@@ -80,19 +80,19 @@ enum rpmsg_ptest {
 	totalbytes = bsend + brecv;			\
 	tsum = (tsum/1000);				\
 	printk("\n--- rpmsg ping statistics ---\n"	\
-			"%lu packets transmitted, "	\
-			"%lu packets received, "	\
+			"%u packets transmitted, "	\
+			"%u packets received, "	\
 			"%lu bytes transfered, "	\
-			"%u bytes/ms. \n",		\
+			"%lu bytes/ms. \n",		\
 			nsend, nrecv, totalbytes,	\
 			(totalbytes / tsum));		\
 	if (tmin != UINT_MAX) {				\
 		tavg = tsum / nrecv;			\
 		printk("round-trip min/avg/max = "	\
 			"%u.%03u/%u.%03u/%u.%03u ms\n",	\
-			tmin / 1000, tmin % 1000,	\
-			tavg / 1000, tavg % 1000,	\
-			tmax / 1000, tmax % 1000);	\
+		(u32)tmin / 1000, (u32)tmin % 1000,	\
+		(u32)tavg / 1000, (u32)tavg % 1000,	\
+		(u32)tmax / 1000, (u32)tmax % 1000);	\
 	}						\
 } while(0)
 
@@ -128,13 +128,13 @@ struct rpmsg_recv_blk{
 	int len;
 	void  *priv;
 	unsigned long addr;
-	unsigned char *data;
+	const void *data;
 	struct list_head link;
 };
 
 void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
 		 				struct rpmsg_test_args *targs);
 void rpmsg_ping_cb(struct rpmsg_channel *rpdev, void *data, int len,
-							void *priv, u32 src);
-int rpmsg_ping_status(rvdev);
+						void *priv, unsigned long src);
+int rpmsg_ping_status(struct rpmsg_client_vdev *rvdev);
 #endif //_RPMSG_CLIENT_H

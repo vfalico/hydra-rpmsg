@@ -68,11 +68,6 @@ static unsigned int rpmsg_dev_index;
 struct workqueue_struct *rpmsg_virtio_cfg_wq;
 struct workqueue_struct *rpmsg_virtio_rcv_wq;
 
-/*
- * Who am I ? rpmsg running on rproc/lproc
- */
-bool is_bsp;
-
 static ssize_t modalias_show(struct device *dev,
 			     struct device_attribute *attr, char *buf)
 {
@@ -155,7 +150,7 @@ static struct rpmsg_endpoint *__rpmsg_create_ept(struct virtproc_info *vrp,
 	}
 
 	dev_dbg(dev, "%s:%s vrp %p rpdev %p priv %p addr %lu\n",
-			(is_bsp ? "host" : "lproc"),__func__, vrp, rpdev,
+			(vrp->is_bsp ? "host" : "lproc"),__func__, vrp, rpdev,
 			priv, addr);
 
 	kref_init(&ept->refcount);
@@ -889,18 +884,19 @@ static void rpmsg_ns_cb(struct rpmsg_channel *rpdev, void *data, int len,
 		 * 1. This has to be modified to get invoked from virtio layer
 		 * as a callback.
 		 */
-		rpmsg_virtio_cfg_changed(vrp);
+		//rpmsg_virtio_cfg_changed(vrp);
 	}
 }
 
-struct device *rpmsg_setup_ring_attr(struct virtio_device *vdev,
-		bool *is_bsp, vq_callback_t *vq_cbs[], const char *names[])
+struct device *rpmsg_setup_ring_attr(struct virtproc_info *vrp,
+				vq_callback_t *vq_cbs[], const char *names[])
 {
 	struct device *parent;
+	struct virtio_device *vdev = vrp->vdev;
 	const char *dname = dev_name(vdev->dev.parent);
 
 	if(strncmp(dname, "remoteproc", 10) == 0) {
-		*is_bsp = 1;
+		vrp->is_bsp = 1;
 		parent = vdev->dev.parent->parent;
 		vq_cbs[0] = rpmsg_recv_done;
 		vq_cbs[1] = rpmsg_xmit_done;
@@ -909,7 +905,7 @@ struct device *rpmsg_setup_ring_attr(struct virtio_device *vdev,
 		names[1] = "send";
 		names[2] = "var";
 	} else {
-		*is_bsp = 0;
+		vrp->is_bsp = 0;
 		parent = vdev->dev.parent;
 		vq_cbs[0] = rpmsg_xmit_done;
 		vq_cbs[1] = rpmsg_recv_done;
@@ -931,7 +927,6 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	void *bufs_va = NULL;
 	int err = 0, i;
 	size_t total_buf_space;
-	bool is_bsp;
 
 	vrp = kzalloc(sizeof(*vrp), GFP_KERNEL);
 	if (!vrp)
@@ -944,7 +939,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	mutex_init(&vrp->tx_lock);
 	init_waitqueue_head(&vrp->sendq);
 
-	parent_dev = rpmsg_setup_ring_attr(vdev, &is_bsp, vq_cbs, names);
+	parent_dev = rpmsg_setup_ring_attr(vrp, vq_cbs, names);
 
 	/* We expect three virtqueues, rx, tx and var (and in this order) */
 	err = vdev->config->find_vqs(vdev, 3, vqs, vq_cbs, names);
@@ -953,28 +948,52 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		goto free_vrp;
 	}
 
-	vrp->rvq = vqs[(is_bsp?0:1)];
-	vrp->svq = vqs[(is_bsp?1:0)];
+	vrp->rvq = vqs[(vrp->is_bsp?0:1)];
+	vrp->svq = vqs[(vrp->is_bsp?1:0)];
 	vrp->vvq = vqs[2];
 
-	/* allocate coherent memory for the buffers */
-	bufs_va = dma_alloc_coherent(parent_dev,
-				RPMSG_TOTAL_BUF_SPACE,
-				&vrp->bufs_dma, GFP_KERNEL);
-	if (!bufs_va) {
-		dev_err(&vdev->dev, "failed bufs_va %p\n",bufs_va);
-		err = -ENOMEM;
-		goto vqs_del;
+	/* we expect symmetric tx/rx vrings */
+	WARN_ON(virtqueue_get_vring_size(vrp->rvq) !=
+		virtqueue_get_vring_size(vrp->svq));
+
+	/* we need less buffers if vrings are small */
+	if (virtqueue_get_vring_size(vrp->rvq) < MAX_RPMSG_NUM_BUFS / 2)
+		vrp->num_bufs = virtqueue_get_vring_size(vrp->rvq) * 2;
+	else
+		vrp->num_bufs = MAX_RPMSG_NUM_BUFS * 2;
+
+	total_buf_space = vrp->num_bufs * RPMSG_BUF_SIZE;
+
+	if(vrp->is_bsp) {
+		/* allocate coherent memory for the buffers */
+		bufs_va = dma_alloc_coherent(parent_dev,
+				total_buf_space, &vrp->bufs_dma,
+				GFP_KERNEL);
+		if (!bufs_va) {
+			dev_err(&vdev->dev, "failed bufs_va %p\n",bufs_va);
+			err = -ENOMEM;
+			goto vqs_del;
+		}
+
+		dev_info(&vdev->dev, "buffers: va %p, dma 0x%llx\n", bufs_va,
+					(unsigned long long)vrp->bufs_dma);
+		/* half the buffers is dedicated for RX */
+		vrp->rbufs = bufs_va;
+
+		/* and half is dedicated for TX */
+		vrp->sbufs = bufs_va + total_buf_space / 2;
+
+		rpmsg_setup_recv_buf(vrp, total_buf_space);
+	} else {
+		err = rpmsg_map_fixed_buf_pool(vrp, total_buf_space);
+		if (err < 0) {
+			dev_err(&vdev->dev,"rpmsg remote buffer mapping failed\n");
+			goto free_vrp;
+		}
 	}
 
-	dev_dbg(&vdev->dev, "buffers: va %p, dma 0x%llx\n", bufs_va,
-					(unsigned long long)vrp->bufs_dma);
-
-	/* All the buffers is dedicated for RX */
-	vrp->rbufs = bufs_va;
-
 	/* set up the receive buffers */
-	for (i = 0; i < RPMSG_NUM_BUFS ; i++) {
+	for (i = 0; i < vrp->num_bufs / 2; i++) {
 		struct scatterlist sg;
 		void *cpu_addr = vrp->rbufs + i * RPMSG_BUF_SIZE;
 
@@ -1001,18 +1020,11 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		}
 	}
 
-	/* tell the remote processor it can start sending messages */
-	virtqueue_kick(vrp->rvq);
-
-	dev_info(&vdev->dev, "rpmsg %s is online\n",((is_bsp) ? "host":"lproc"));
-
-	rpmsg_setup_recv_buf(vrp, RPMSG_TOTAL_BUF_SPACE);
-
 	INIT_WORK(&vrp->config_work, rpmsg_virtio_cfg_changed_work);
 	INIT_WORK(&vrp->var_size_recv_work, rpmsg_virtio_var_size_msg_work);
 
 	/* Send the initial name service message from remote processor */
-	if(!is_bsp){
+	if(!vrp->is_bsp){
 		struct rpmsg_channel *rpdev;
 		struct rpmsg_channel_info chinfo;
 
@@ -1021,18 +1033,24 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		rpdev = rpmsg_create_channel(vrp, &chinfo);
 		if (!rpdev)
 			dev_err(&vdev->dev, "rpmsg_create_channel failed\n");
-
+#if 0
 		err = rpmsg_map_remote_bufs(vrp);
 		if (err < 0)
 			dev_err(&vdev->dev,"rpmsg remote buffer mapping failed\n");
-
+#endif
 		create_dummy_rpmsg_ept(vrp, rpdev, &chinfo);
 	}
+	/* tell the remote processor it can start sending messages */
+	virtqueue_kick(vrp->rvq);
+
+	dev_info(&vdev->dev, "rpmsg %s is online\n",(vrp->is_bsp ?
+							"host":"lproc"));
 	return 0;
 
 free_coherent:
-	dma_free_coherent(parent_dev, RPMSG_TOTAL_BUF_SPACE,
-					bufs_va, vrp->bufs_dma);
+	if(vrp->is_bsp)
+		dma_free_coherent(parent_dev, total_buf_space, bufs_va,
+				vrp->bufs_dma);
 vqs_del:
 	vdev->config->del_vqs(vrp->vdev);
 free_vrp:

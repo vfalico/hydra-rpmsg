@@ -39,7 +39,7 @@ struct rpmsg_perf {
 	enum rpmsg_ptest type;
 	struct rpmsg_channel *rpdev;
 	void (*cb)(struct rpmsg_channel *rpdev, void *data, int len,
-			void *priv, unsigned int src);
+			void *priv, unsigned long src);
 };
 
 static struct rpmsg_perf grpt;
@@ -67,9 +67,9 @@ int inline rpmsg_ping_status(struct rpmsg_client_vdev *rvdev)
 }
 
 void rpmsg_ping_cb(struct rpmsg_channel *rpdev, void *data, int len,
-						void *priv, u32 src)
+						void *priv, unsigned long src)
 {
-	s64 t;
+	unsigned long t;
 	struct rpmsg_client_vdev *rvdev = priv;
 	struct rpmsg_perf *rpt = rvdev->priv;
 
@@ -80,14 +80,15 @@ void rpmsg_ping_cb(struct rpmsg_channel *rpdev, void *data, int len,
 
 	UPDATE_ROUND_TRIP_STATS();
 
-	dev_info(&rpdev->dev, "%d bytes from 0x%x seq=%d t= %ld rtt=%ld us\n",
+	dev_info(&rpdev->dev, "%d bytes from 0x%lx seq=%d t= %lu rtt=%lu us\n",
 			len, src, nrecv, t, triptime);
 
 	rpt->cb(rpdev, data, len, priv, src);
 }
 
 static void rpmsg_client_fixed_size_cb(struct rpmsg_channel *rpdev, void *data,
-	       					int len, void *priv, u32 src)
+	       					int len, void *priv,
+						unsigned long src)
 {
 	int ret;
 	struct rpmsg_client_vdev *rvdev = priv;
@@ -122,7 +123,8 @@ static void rpmsg_client_fixed_size_cb(struct rpmsg_channel *rpdev, void *data,
 }
 
 static void rpmsg_client_var_size_cb(struct rpmsg_channel *rpdev, void *data,
-	       					int len, void *priv, u32 src)
+	       					int len, void *priv, 
+						unsigned long src)
 {
 	int ret;
 	struct rpmsg_client_vdev *rvdev = priv;
@@ -193,7 +195,7 @@ void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
 			if (ret) {
 				dev_err(&rpdev->dev, "rpmsg_send failed: %d\n",
 					       	ret);
-				return NULL;
+				return;
 			}
 			break;
 		case RPMSG_VAR_SIZE_LATENCY:
@@ -208,13 +210,13 @@ void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
 			if (ret) {
 				dev_err(&rpdev->dev, "rpmsg_send_recv failed:"
 						" %d\n", ret);
-				return NULL;
+				return;
 			}
 			break;
 		case RPMSG_NULL_TEST:
 		default:
 			dev_err(&rpdev->dev, "unknown rpmsg test type\n");
-			return NULL;
+			return;
 	}
 	LOG_TIME(send_end_time);
 	nsend++;

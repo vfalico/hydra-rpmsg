@@ -424,8 +424,6 @@ static int __init dummy_lproc_early_param(char *p)
 	smp_ops.smp_prepare_cpus = dummy_lproc_prepare_cpus;
 	lapic_timer_frequency = 1000000;
 
-	localproc_init();
 	return 0;
 }
-
 early_param("lproc", dummy_lproc_early_param);

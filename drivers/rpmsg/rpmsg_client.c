@@ -73,7 +73,7 @@ static inline void rpmsg_queue(struct rpmsg_recv_blk *rblk,
 	spin_unlock_irqrestore(&rcdev->recv_spinlock, flags);
 }
 
-static inline struct rpsmg_recv_blk * rpmsg_dequeue(struct list_head *queue)
+static inline struct rpmsg_recv_blk* rpmsg_dequeue(struct list_head *queue)
 {
 	struct rpmsg_client_device *rcdev = container_of(queue,
 					struct rpmsg_client_device, recvqueue);
@@ -92,7 +92,7 @@ static inline struct rpsmg_recv_blk * rpmsg_dequeue(struct list_head *queue)
 }
 
 static ssize_t
-rpmsg_read(struct file *f, const char __user *buf, size_t count, loff_t *ppos)
+rpmsg_read(struct file *f, char __user *buf, size_t count, loff_t *ppos)
 {
 	struct rpmsg_client_vdev *rvdev = f->private_data;
 	struct rpmsg_client_device *rcdev = rvdev->rcdev;
@@ -110,10 +110,10 @@ rpmsg_read(struct file *f, const char __user *buf, size_t count, loff_t *ppos)
 		if (ret)
 			return ret;
 	}
-	dev_info(&rpdev->dev, "%s: %d bytes from 0x%x ",__func__, rblk->len,
-			rblk->addr);
+	dev_info(&rpdev->dev, "%s: %d bytes from %p ",__func__, rblk->len,
+			(void *)rblk->addr);
 	if(rblk->len > count) {
-		dev_err(&rpdev->dev, "%s: packet too big %d > %d\n",__func__,
+		dev_err(&rpdev->dev, "%s: packet too big %d > %zu\n",__func__,
 							rblk->len, count);
 		kfree(rblk);
 		return -EMSGSIZE;
@@ -162,11 +162,11 @@ int rpmsg_release(struct inode *inode, struct file *f)
 }
 
 void rpmsg_client_cb(struct rpmsg_channel *rpdev, void *data, int len,
-							void *priv, u32 src)
+						void *priv, unsigned long src)
 {
 	struct rpmsg_recv_blk *rblk;
 
-	dev_info(&rpdev->dev, "%s: %d bytes from 0x%x",__func__, len, src);
+	dev_info(&rpdev->dev, "%s: %d bytes from 0x%lx",__func__, len, src);
 
 	rblk = kmalloc(sizeof(*rblk), GFP_ATOMIC);
 	if (!rblk) {
@@ -226,7 +226,7 @@ long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 			rvdev->src = addr;
 			rvdev->ept = ept;
 			ept->priv = rvdev;
-			printk(KERN_INFO "%s create_ept ept_addr=%d ept=%p\n",
+			printk(KERN_INFO "%s create_ept ept_addr=%lu ept=%p\n",
 					__func__, rvdev->src, rvdev->ept);
 			break;
 		}
@@ -294,7 +294,8 @@ static int rpmsg_client_probe(struct rpmsg_channel *rpdev)
 	if (IS_ERR(device)) {
 		ret = PTR_ERR(device);
 		dev_err(&rpdev->dev, "devce_create failed with %d while trying"
-				"to create %s%d", RPMSG_CLIENT_DEV, rcdev->id);
+				"to create %s%d", ret, RPMSG_CLIENT_DEV,
+				rcdev->id);
 		goto cdevice_create_fail;
 	}
 	rcdev->rpdev = rpdev;
@@ -314,7 +315,7 @@ ida_fail:
 	return ret;
 }
 
-static void __devexit rpmsg_client_remove(struct rpmsg_channel *rpdev)
+static void rpmsg_client_remove(struct rpmsg_channel *rpdev)
 {
 	dev_info(&rpdev->dev, "rpmsg client driver is removed\n");
 }
@@ -331,7 +332,7 @@ static struct rpmsg_driver rpmsg_client = {
 	.id_table	= rpmsg_client_driver_id_table,
 	.probe		= rpmsg_client_probe,
 	.callback	= rpmsg_client_cb,
-	.remove		= __devexit_p(rpmsg_client_remove),
+	.remove		= rpmsg_client_remove,
 };
 
 static int __init rpmsg_client_init(void)

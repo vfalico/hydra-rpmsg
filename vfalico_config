@@ -3301,6 +3301,7 @@ CONFIG_DUMMY_LOCALPROC=y
 # Rpmsg drivers
 #
 CONFIG_RPMSG=m
+CONFIG_RPMSG_CLIENT=m
 
 #
 # SOC (System On Chip) specific Drivers

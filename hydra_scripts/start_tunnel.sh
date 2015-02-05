@@ -30,4 +30,5 @@ TUN_DEV=${TUN_ID%:}
 echo "ifconfig $TUN_DEV 10.1.2.$TUN_CPU up"
 ifconfig $TUN_DEV 10.1.2.$TUN_CPU up
 route add -net 10.1.2.0 netmask 255.255.255.0 dev $TUN_DEV
+sysctl -w net.ipv4.conf.$TUN_DEV.accept_local=1
 echo "tunnel device $TUN_DEV setup on 10.1.2.$TUN_CPU"

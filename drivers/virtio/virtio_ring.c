@@ -131,7 +131,7 @@ void __debug_virtqueue(struct virtqueue *_vq, char *q, char *fmt)
 
 	pr_info("virtqueue stats:\n");
 	pr_info("\t\tvq.num_free=%u vq.free_head=%u\n",
-			vq->num_free, vq->free_head);
+			vq->vq.num_free, vq->free_head);
 	pr_info("\t\tvq.num_added=%u vq.last_used_idx=%u\n",
 			vq->num_added,vq->last_used_idx);
 
@@ -966,7 +966,7 @@ int virtqueue_get_avail_buf(struct virtqueue *_vq, int *out, int *in,
 
 	vq->hlast_avail_idx++;
 
-	pr_debug("%s: vq %s avl_idx %d lavl_idx %d head %d out %d in %d\n",
+	pr_info("%s: vq %s avl_idx %d lavl_idx %d head %d out %d in %d\n",
 			__func__, _vq->name, avail_idx, vq->hlast_avail_idx,
 			head, *out, *in);
 	return head;
@@ -988,7 +988,7 @@ void virtqueue_update_used_idx(struct virtqueue *_vq, u16 used_idx, int len)
 	used->id = used_idx;
 	used->len = len;
 	vq->vring.used->idx = vq->hlast_used_idx + 1;
-	pr_debug("%s: %s used_idx %u len %d vring.used->idx %d\n",
+	pr_info("%s: %s used_idx %u len %d vring.used->idx %d\n",
 			__func__, _vq->name, used_idx, len, vq->vring.used->idx);
 	vq->hlast_used_idx++;
 }

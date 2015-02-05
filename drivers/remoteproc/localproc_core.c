@@ -30,7 +30,7 @@ struct lproc {
 };
 extern void dummy_lproc_kick_bsp(void);
 
-static void lproc_virtio_notify(struct virtqueue *vq)
+static bool lproc_virtio_notify(struct virtqueue *vq)
 {
 	/*
 	 * TODO: We currently don't have anything implemented to
@@ -38,11 +38,7 @@ static void lproc_virtio_notify(struct virtqueue *vq)
 	 * ISR will look for work in both queues.
 	 */
 	dummy_lproc_kick_bsp();
-}
-
-static void __lproc_virtio_del_vqs(struct virtio_device *vdev)
-{
-	printk(KERN_INFO "%s: Not implemented\n", __func__);
+	return true;
 }
 
 static void lproc_virtio_del_vqs(struct virtio_device *vdev)
@@ -88,7 +84,7 @@ static void lproc_virtio_reset(struct virtio_device *vdev)
 }
 
 /* provide the vdev features as retrieved from the firmware */
-static u32 lproc_virtio_get_features(struct virtio_device *vdev)
+static u64 lproc_virtio_get_features(struct virtio_device *vdev)
 {
 	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
 	struct lproc *lproc = (struct lproc *)lvdev->rproc;
@@ -100,7 +96,7 @@ static u32 lproc_virtio_get_features(struct virtio_device *vdev)
 	return rsc->gfeatures;
 }
 
-static void lproc_virtio_finalize_features(struct virtio_device *vdev)
+static int lproc_virtio_finalize_features(struct virtio_device *vdev)
 {
 	struct rproc_vdev *lvdev = vdev_to_rvdev(vdev);
 	struct lproc *lproc = (struct lproc *)lvdev->rproc;
@@ -110,8 +106,9 @@ static void lproc_virtio_finalize_features(struct virtio_device *vdev)
 
 	vring_transport_features(vdev);
 
-	dev_dbg(&vdev->dev,"%s:gfeatures %x dfeatures %x vdev->features %x\n",
+	dev_dbg(&vdev->dev,"%s:gfeatures %x dfeatures %x vdev->features %llx\n",
 			__func__,rsc->gfeatures,rsc->dfeatures,vdev->features);
+	return 0;
 }
 
 static void lproc_virtio_get(struct virtio_device *vdev, unsigned offset,
@@ -129,7 +126,8 @@ static void lproc_virtio_get(struct virtio_device *vdev, unsigned offset,
 		dev_err(&vdev->dev, "lproc_virtio_get: access out of bounds\n");
 		return;
 	}
-
+	dev_info(&vdev->dev, "%s: offset %d table_ptr %p rsc %p, cfg %p\n",
+			__func__, offset, lproc->table_ptr, rsc, cfg);
 	memcpy(buf, cfg + offset, len);
 }
 
@@ -148,7 +146,8 @@ static void lproc_virtio_set(struct virtio_device *vdev, unsigned offset,
 		dev_err(&vdev->dev, "rproc_virtio_set: access out of bounds\n");
 		return;
 	}
-
+	dev_info(&vdev->dev, "%s: offset %d table_ptr %p rsc %p, cfg %p\n",
+			__func__, offset, lproc->table_ptr, rsc, cfg);
 	memcpy(cfg + offset, buf, len);
 }
 
@@ -169,7 +168,7 @@ int lproc_map_vring(struct rproc_vdev *lvdev, int i)
 	/* actual size of vring (in bytes) */
 	size = PAGE_ALIGN(vring_size(lvring->len, lvring->align));
 
-	va = ioremap_cache(dma,size);
+	va = ioremap_cache(dma, size);
 	if (!va) {
 		dev_err(dev, "ioremap failed\n");
 		return -EINVAL;
@@ -196,7 +195,7 @@ static struct virtqueue *lp_find_vq(struct virtio_device *vdev,
 	struct rproc_vring *lvring;
 	struct virtqueue *vq;
 	void *addr;
-	int len, size, ret;
+	int len, ret;
 
 	/* we're temporarily limited to two virtqueues per rvdev */
 	if (id >= ARRAY_SIZE(lvdev->vring))
@@ -217,7 +216,7 @@ static struct virtqueue *lp_find_vq(struct virtio_device *vdev,
 	 * Create the new vq, and tell virtio we're not interested in
 	 * the 'weak' smp barriers, since we're talking with a real device.
 	 */
-	vq = vring_new_virtqueue(len, lvring->align, vdev, false, addr,
+	vq = vring_new_virtqueue(id, len, lvring->align, vdev, false, addr,
 					lproc_virtio_notify, callback, name);
 	if (!vq) {
 		dev_err(dev, "vring_new_virtqueue %s failed\n", name);
@@ -354,7 +353,7 @@ lproc_parse_vring(struct rproc_vdev *lvdev, struct fw_rsc_vdev *rsc, int i)
 	struct fw_rsc_vdev_vring *vring = &rsc->vring[i];
 	struct rproc_vring *lvring = &lvdev->vring[i];
 
-	printk(KERN_INFO "lproc: vdev rsc: vring%d: da %x, qsz %d, align %d\n",
+	printk(KERN_INFO "lproc: vdev rsc: vring%d: da %lx, qsz %d, align %d\n",
 				i, vring->da, vring->num, vring->align);
 
 	/* make sure reserved bytes are zeroes */
@@ -504,7 +503,7 @@ static void lproc_config_virtio(struct lproc *lproc)
 	// TODO get it from fw table routines
 	int ret, tablesz = sizeof(struct dummy_rproc_resourcetable);
 	/* resource table */
-	lproc->table_ptr = lrsc;
+	lproc->table_ptr = (struct resource_table *)lrsc;
 
 	/* count the number of notify-ids */
 	lproc->max_notifyid = -1;

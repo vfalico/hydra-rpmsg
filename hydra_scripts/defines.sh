@@ -1,7 +1,6 @@
 #!/bin/sh
 
 HYDRA_SCRIPTS=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
-
 #base memory addresses, currently can't intersect
 AP_CONFIG_START=0x4100000
 BSP_CONFIG_START=0x2000000
