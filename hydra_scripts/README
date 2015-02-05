@@ -1,0 +1,30 @@
+Some definitions (if one uses qemu-kvm x86_64, wasn't tested on anything
+else yet):
+Host: Where QEMU VM is started
+BSP: The QEMU kernel
+AP: The kernel that is started second inside QEMU.
+
+Host (building the kernels mainly):
+cd src/hydra_scripts
+./prepare.sh
+
+BSP (installing the BSP kernel, rebooting and starting the AP):
+cd src
+make modules_install install
+reboot
+cd src/hydra_scripts
+./start_ap.sh
+
+There should be some output on serial0, and one should be able to telnet
+into the AP via 10.1.2.2.
+
+Qemu command line used:
+sudo qemu-kvm -m 4096 -drive file=<hdd image>,if=virtio \
+-netdev type=tap,script=<ifup script>,downscript=no,id=net0 \
+-device virtio-net-pci,netdev=net0 \
+-smp 4 -name hydra -virtfs
+local,path=<src directory>,mount_tag=src,security_model=none \
+-serial vc \
+$@
+
+It also permits to mount the src dir transparently in the VM, using 9p.
