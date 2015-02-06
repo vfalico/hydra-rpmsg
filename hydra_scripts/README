@@ -28,3 +28,73 @@ local,path=<src directory>,mount_tag=src,security_model=none \
 $@
 
 It also permits to mount the src dir transparently in the VM, using 9p.
+
+== RPMSG: == 
+
+- On BSP it is built in statically.
+- On AP, it is kernel module. It will be copied to AP initrd in prepare.sh, so
+  only thing to do is after the AP boot, just run
+
+	insmod /kmod/rpmsg.ko
+
+- Once loaded, you can verify the following some logs of it via 'dmesg' on BSP.
+
+	"NS announcement: 6c 70 72 6f 63 00 00 00 00 00 00 00 00 00 00 00  lproc..........."
+
+- On BSP, rpmsg.ko is already loaded, you need to load the rpmsg client device
+  driver. (on AP, I just hacked the RPMG dirver itself to mirror the BSP requests.)
+
+ 	On BSP,
+
+		insmod /src/driver/rpmsg/client_rpmsg.ko
+
+- There is a "main.c" in /src/driver/rpmsg/ directory which can be used for testing
+  the protocol, It has Ping program which will sent and receive pkts of different
+  sizes.
+
+- Create Application executatble to test open/read/write/ioctl calls to RPMSG.
+
+# cc  main.c -o test_rpmsg
+# ls -ltr test_rpmsg
+-rwxr-xr-x 1 root root 13171 Jan 27  2015 test_rpmsg
+
+
+# ./test_rpmsg -h
+./test_rpmsg: invalid option -- 'h'
+Usage: test_rpmsg [-c cpu] [-t test_type] [-n num_runs]
+[-s sbuf_size] [-r rbuf_siz] [-e rpmsg_ept_addr] [-w wait]
+
+# ./test_rpmsg -c 1 -t 1 -n 10 -s 128 -r 128 -e 999 -w 1
+args: c=1, t=1, n=10, s=128, r=128, e=999 w=1
+# dmesg | tail
+[ 1860.726337] client_rpmsg rpmsg0: TX From 0x3e7, To 0x418, Len 128, Flags 0, Reserved 0
+[ 1860.729505] client_rpmsg rpmsg0: 18 bytes from 0x418 seq=9 t= 2999541 rtt=2999 us
+[ 1860.729874] client_rpmsg rpmsg0: TX From 0x3e7, To 0x418, Len 128, Flags 0, Reserved 0
+[ 1860.739063] client_rpmsg rpmsg0: 19 bytes from 0x418 seq=10 t= 8998623 rtt=8998 us
+[ 1860.739156] --- rpmsg ping statistics ---
+[ 1860.739159] 10 packets transmitted, 10 packets received, 1701 bytes transfered, 70 bytes/ms.
+[ 1860.739272] round-trip min/avg/max = 0.000/0.002/8.998 ms
+[ 1860.741408] rpmsg_ioctl delete_ept cmd=-1073188093 ept_addr=999
+[ 1860.772231] rpmsg_release done
+
+
+##
+## In the similar way we one can very the size of sbuf_size and rbuf_size to send and receive buffers of
+## different sizes (upto 64K). Beyond 480 bytes use "-t 2" for selecting variable size test command for
+## sending and receving large packet sizes.
+##
+
+# ./test_rpmsg -c 1 -t 2 -n 10 -s 64000 -r 64000 -e 999 -w 1
+args: c=1, t=2, n=10, s=64000, r=64000, e=999 w=1
+root@popcorn:/home/ajo/git/ajo_popcorn/drivers/rpmsg# dmesg | tail
+[ 2714.802883] client_rpmsg rpmsg0: 64000 bytes from 0x418 seq=9 t= 999847 rtt=999 us
+[ 2714.802966] client_rpmsg rpmsg0: TX From 0x3e7, To 0x418, Len 64024, Flags 0, Reserved 0
+[ 2714.803950] rpmsg virtio3: From: 0x418, To: 0x3e7, Len: 64000, Flags: 0, Reserved: 0
+[ 2714.803971] client_rpmsg rpmsg0: 64000 bytes from 0x418 seq=10 t= 999847 rtt=999 us
+[ 2714.804002]
+[ 2714.804005] --- rpmsg ping statistics ---
+[ 2714.804008] 10 packets transmitted, 10 packets received, 1280240 bytes transfered, 75308 bytes/ms.
+[ 2714.804036] round-trip min/avg/max = 0.999/0.001/4.999 ms
+[ 2714.807982] rpmsg_ioctl delete_ept cmd=-1073188093 ept_addr=999
+[ 2714.829847] rpmsg_release done
+
