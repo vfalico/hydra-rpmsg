@@ -220,59 +220,6 @@ int rpmsg_iounmap_iov(struct iovec iov[], int iov_size, bool ptov)
 	return i;
 }
 
-/* super simple buffer "allocator" that is just enough for now */
-static void *get_a_tx_buf(struct virtproc_info *vrp)
-{
-	unsigned int len;
-	void *ret;
-
-	if (vrp->last_sbuf < vrp->num_bufs / 2)
-		ret = vrp->sbufs + RPMSG_BUF_SIZE * vrp->last_sbuf++;
-	else {
-		ret = vrp->sbufs;
-		vrp->last_sbuf = 1;
-	}
-	return ret;
-}
-
-
-/*
- * In this version of RPMSG we follow producer/consumer model where the tx
- * always consume a buffer from the remote processor's rx ring and sends
- * down its data. So in principle, the rings are inversed between host and
-* remote processor.
-*
- * TODO: A better implementation.
- *
- */
-void *get_a_fixed_size_tx_buf(struct virtproc_info *vrp, u16 *idx)
-{
-	int in, out, ret;
-	struct iovec piov[1] = {{ piov[0].iov_base = 0, piov[0].iov_len = 0 }};
-	struct iovec viov[1] = {{ viov[0].iov_base = 0, viov[0].iov_len = 0 }};
-	bool ptov = vrp->sbufs ? true : false;
-	void *va;
-
-	*idx = virtqueue_get_avail_buf(vrp->svq, &out, &in, piov,
-							ARRAY_SIZE(piov));
-	if(*idx < 0) {
-		dev_err(&vrp->vdev->dev, "virtqueue_get_avail_buf failed\n");
-		return NULL;
-	}
-#if 0
-	ret = rpmsg_phy_to_virt_iov(vrp, piov, viov, ARRAY_SIZE(piov), ptov);
-	if(ret < 0) {
-		dev_err(&vrp->vdev->dev, "rpmsg_phy_to_virt_iov failed\n");
-		return NULL;
-	}
-	return viov[0].iov_base;
-#endif
-	va = get_a_tx_buf(vrp);
-	dev_info(&vrp->vdev->dev,"get_a_tx_buf: piov[0]=%p va=%p pa=%p\n",
-			piov[0].iov_base, va, virt_to_phys(va));
-	return va;
-}
-
 void __debug_dump_rpmsg_req(struct virtproc_info *vrp, struct rpmsg_req *req,
 				struct scatterlist *sg, int out, int in,
 				struct iovec iov[],int iov_count)

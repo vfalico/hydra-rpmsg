@@ -35,6 +35,11 @@ struct rpmsg_dma_pool {
 	size_t align;
 };
 
+struct rcv_ctx {
+	struct vringh_kiov riov;
+	unsigned short head;
+};
+
 /**
  * struct virtproc_info - virtual remote processor state
  * @vdev:	the virtio device
@@ -63,6 +68,8 @@ struct rpmsg_dma_pool {
 struct virtproc_info {
 	struct virtio_device *vdev;
 	struct virtqueue *rvq, *svq, *vvq;
+	struct vringh *vrh;
+	struct rcv_ctx vrh_ctx;
 	void *rbufs, *sbufs;
 	unsigned int num_bufs;
 	int last_sbuf;

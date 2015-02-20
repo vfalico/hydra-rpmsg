@@ -43,6 +43,18 @@ static bool rproc_virtio_notify(struct virtqueue *vq)
 	return true;
 }
 
+/* kick the remote processor, and let it know which vring to poke at */
+static void rproc_virtio_vringh_notify(struct vringh *vrh)
+{
+	struct rproc_vring *rvring = vringh_to_rvring(vrh);
+	struct rproc *rproc = rvring->rvdev->rproc;
+	int notifyid = rvring->notifyid;
+
+	dev_dbg(&rproc->dev, "kicking vq index: %d\n", notifyid);
+
+	rproc->ops->kick(rproc, notifyid);
+}
+
 /**
  * rproc_vq_interrupt() - tell remoteproc that a virtqueue is interrupted
  * @rproc: handle to the remote processor
@@ -62,10 +74,18 @@ irqreturn_t rproc_vq_interrupt(struct rproc *rproc, int notifyid)
 	dev_dbg(&rproc->dev, "vq index %d is interrupted\n", notifyid);
 
 	rvring = idr_find(&rproc->notifyids, notifyid);
-	if (!rvring || !rvring->vq)
+	if (!rvring)
 		return IRQ_NONE;
 
-	return vring_interrupt(0, rvring->vq);
+	if (rvring->rvringh && rvring->rvringh->vringh_cb) {
+		rvring->rvringh->vringh_cb(&rvring->rvdev->vdev,
+						&rvring->rvringh->vrh);
+		return IRQ_HANDLED;
+	} else if (rvring->vq) {
+		return vring_interrupt(0, rvring->vq);
+	} else {
+		return IRQ_NONE;
+	}
 }
 EXPORT_SYMBOL(rproc_vq_interrupt);
 
@@ -80,7 +100,7 @@ static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
 	struct rproc_vring *rvring;
 	struct virtqueue *vq;
 	void *addr;
-	int len, size, ret;
+	int len, size, ret, i;
 
 	/* we're temporarily limited to two virtqueues per rvdev */
 	if (id >= ARRAY_SIZE(rvdev->vring))
@@ -89,11 +109,25 @@ static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
 	if (!name)
 		return NULL;
 
-	ret = rproc_alloc_vring(rvdev, id);
-	if (ret)
-		return ERR_PTR(ret);
+	/* Find available vring for a new vq */
+	for (i = id; i < ARRAY_SIZE(rvdev->vring); i++) {
+		rvring = &rvdev->vring[i];
 
-	rvring = &rvdev->vring[id];
+		/* Calling find_vqs twice is bad */
+		if (rvring->vq)
+			return ERR_PTR(-EINVAL);
+
+		/* Use vring not already in use */
+		if (!rvring->rvringh)
+			break;
+	}
+	if (i == ARRAY_SIZE(rvdev->vring))
+		return ERR_PTR(-ENODEV);
+
+	ret = rproc_alloc_vring(rvdev, i);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+
 	addr = rvring->va;
 	len = rvring->len;
 
@@ -240,6 +274,159 @@ static int rproc_virtio_finalize_features(struct virtio_device *vdev)
 	return 0;
 }
 
+/* Helper function that creates and initializes the host virtio ring */
+static struct vringh *rproc_create_new_vringh(struct rproc_vring *rvring,
+					unsigned int index,
+					vrh_callback_t callback)
+{
+	struct rproc_vringh *rvrh = NULL;
+	struct rproc_vdev *rvdev = rvring->rvdev;
+	int err;
+
+	rvrh = kzalloc(sizeof(*rvrh), GFP_KERNEL);
+	err = -ENOMEM;
+	if (!rvrh)
+		goto err;
+
+	/* initialize the host virtio ring */
+	rvrh->vringh_cb = callback;
+	rvrh->vrh.notify = rproc_virtio_vringh_notify;
+	memset(rvring->va, 0, vring_size(rvring->len, rvring->align));
+	vring_init(&rvrh->vrh.vring, rvring->len, rvring->va, rvring->align);
+
+	/*
+	 * Create the new vring host, and tell we're not interested in
+	 * the 'weak' smp barriers, since we're talking with a real device.
+	 */
+	err = vringh_init_kern(&rvrh->vrh,
+				rproc_virtio_get_features(&rvdev->vdev),
+				rvring->len,
+				false,
+				rvrh->vrh.vring.desc,
+				rvrh->vrh.vring.avail,
+				rvrh->vrh.vring.used);
+	if (err) {
+		dev_err(&rvdev->rproc->dev,
+			"vringh_init_kern failed\n");
+		goto err;
+	}
+
+	rvring->rvringh = rvrh;
+	return &rvrh->vrh;
+err:
+	kfree(rvrh);
+	return ERR_PTR(err);
+}
+
+static struct vringh *rp_find_vrh(struct virtio_device *vdev,
+				unsigned id,
+				vrh_callback_t callback)
+{
+	struct rproc_vdev *rvdev = vdev_to_rvdev(vdev);
+	struct rproc *rproc = vdev_to_rproc(vdev);
+	struct device *dev = &rproc->dev;
+	struct rproc_vring *rvring;
+	struct vringh *vrh;
+	void *addr;
+	int len, size, ret, i;
+
+	/* we're temporarily limited to two virtqueues per rvdev */
+	if (id >= ARRAY_SIZE(rvdev->vring))
+		return ERR_PTR(-EINVAL);
+
+	/* Find available slot for a new host vring */
+	for (i = id; i < ARRAY_SIZE(rvdev->vring); i++) {
+		rvring = &rvdev->vring[i];
+
+		/* Calling find_vrhs twice is bad */
+		if (rvring->rvringh)
+			return ERR_PTR(-EINVAL);
+
+		/* Use vring not already in use */
+		if (!rvring->vq)
+			break;
+	}
+
+	if (i == ARRAY_SIZE(rvdev->vring))
+		return ERR_PTR(-ENODEV);
+
+	ret = rproc_alloc_vring(rvdev, i);
+	if (ret)
+		return ERR_PTR(ret);
+
+	addr = rvring->va;
+	len = rvring->len;
+
+	/* zero vring */
+	size = vring_size(len, rvring->align);
+	memset(addr, 0, size);
+
+	dev_dbg(dev, "vring%d: va %p qsz %d notifyid %d\n",
+					id, addr, len, rvring->notifyid);
+
+	/*
+	 * Create the new vringh, and tell virtio we're not interested in
+	 * the 'weak' smp barriers, since we're talking with a real device.
+	 */
+	vrh = rproc_create_new_vringh(rvring, id, callback);
+	if (!vrh) {
+		rproc_free_vring(rvring);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	return vrh;
+}
+
+static void __rproc_virtio_del_vrhs(struct virtio_device *vdev)
+{
+	struct rproc_vdev *rvdev = vdev_to_rvdev(vdev);
+	int i, num_of_vrings = ARRAY_SIZE(rvdev->vring);
+
+	for (i = 0; i < num_of_vrings; i++) {
+		struct rproc_vring *rvring = &rvdev->vring[i];
+		if (!rvring->rvringh)
+			continue;
+		kfree(rvring->rvringh);
+		rvring->rvringh = NULL;
+		rproc_free_vring(rvring);
+	}
+}
+
+static void rproc_virtio_del_vrhs(struct virtio_device *vdev)
+{
+	struct rproc *rproc = vdev_to_rproc(vdev);
+
+	/* power down the remote processor before deleting vqs */
+	rproc_shutdown(rproc);
+
+	__rproc_virtio_del_vrhs(vdev);
+}
+
+static int rproc_virtio_find_vrhs(struct virtio_device *vdev, unsigned nhvrs,
+			 struct vringh *vrhs[],
+			 vrh_callback_t *callbacks[])
+{
+	struct rproc *rproc = vdev_to_rproc(vdev);
+	int i, ret;
+
+	for (i = 0; i < nhvrs; ++i) {
+		vrhs[i] = rp_find_vrh(vdev, i, callbacks[i]);
+		if (IS_ERR(vrhs[i])) {
+			ret = PTR_ERR(vrhs[i]);
+			goto error;
+		}
+	}
+	return 0;
+error:
+	__rproc_virtio_del_vrhs(vdev);
+	return ret;
+}
+
+static struct vringh_config_ops rproc_virtio_vringh_ops = {
+	.find_vrhs	= rproc_virtio_find_vrhs,
+	.del_vrhs	= rproc_virtio_del_vrhs,
+};
+
 static void rproc_virtio_get(struct virtio_device *vdev, unsigned offset,
 							void *buf, unsigned len)
 {
@@ -329,6 +516,7 @@ int rproc_add_virtio_dev(struct rproc_vdev *rvdev, int id)
 
 	vdev->id.device	= id,
 	vdev->config = &rproc_virtio_config_ops,
+	vdev->vringh_config = &rproc_virtio_vringh_ops;
 	vdev->dev.parent = dev;
 	vdev->dev.release = rproc_vdev_release;
 

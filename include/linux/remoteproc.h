@@ -39,6 +39,7 @@
 #include <linux/klist.h>
 #include <linux/mutex.h>
 #include <linux/virtio.h>
+#include <linux/vringh.h>
 #include <linux/completion.h>
 #include <linux/idr.h>
 
@@ -472,6 +473,19 @@ struct rproc {
 #define RVDEV_NUM_VRINGS 3
 
 /**
+ * struct rproc_vringh - remoteproc host vring
+ * @vrh: Host side virtio ring
+ * @rvring: Virtio ring associated with the device
+ * @vringh_cb: Callback notifying virtio driver about new buffers
+ */
+struct rproc_vring;
+struct rproc_vringh {
+	struct vringh vrh;
+	struct rproc_vring *rvring;
+	vrh_callback_t *vringh_cb;
+};
+
+/**
  * struct rproc_vring - remoteproc vring state
  * @va:	virtual address
  * @dma: dma address
@@ -481,6 +495,7 @@ struct rproc {
  * @notifyid: rproc-specific unique vring index
  * @rvdev: remote vdev
  * @vq: the virtqueue of this vring
+ * @rvringh: the reversed host-side vring
  */
 struct rproc_vring {
 	void *va;
@@ -491,6 +506,7 @@ struct rproc_vring {
 	int notifyid;
 	struct rproc_vdev *rvdev;
 	struct virtqueue *vq;
+	struct rproc_vringh *rvringh;
 };
 
 /**
@@ -530,6 +546,12 @@ static inline struct rproc *vdev_to_rproc(struct virtio_device *vdev)
 	struct rproc_vdev *rvdev = vdev_to_rvdev(vdev);
 
 	return rvdev->rproc;
+}
+
+static inline struct rproc_vring *vringh_to_rvring(struct vringh *vrh)
+{
+	struct rproc_vringh *rvrh = container_of(vrh, struct rproc_vringh, vrh);
+	return rvrh->rvring;
 }
 
 #endif /* REMOTEPROC_H */
