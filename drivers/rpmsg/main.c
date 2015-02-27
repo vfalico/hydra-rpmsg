@@ -16,7 +16,7 @@
 
 #define DEV_NAME	"/dev/crpmsg"
 #define PATH_MAX	80
-#define PING		1
+//#define PING		1
 
 struct rpmsg_test_args {
 	int remote_cpu;
@@ -36,7 +36,7 @@ static void print_usage(void)
 			" [-e rpmsg_ept_addr] [-w wait]\n");
 }
 
-#define TEST_INPUT_OPTS		"c:t:n:s:r:e:w:"
+#define TEST_INPUT_OPTS		"c:t:n:s:r:e:w:h"
 
 static void dump_args(struct rpmsg_test_args *targs)
 {
@@ -92,6 +92,7 @@ static struct rpmsg_test_args *rpmsg_get_test_args(int argc, char *argv[])
 				targs->wait = atoi(optarg);
 				break;
 			case '?':
+			case 'h':
 			default:
 				print_usage();
 				free(targs);
@@ -140,15 +141,19 @@ int main(int argc, char *argv[])
 		return;
 	}
 #else
+	for(i = 0; i<1000; i++) {
 	if (write(fd, str, MSG_SIZE) < MSG_SIZE){
 		printf("Could not write to %s %s\n", path, strerror(errno));
 		return;
 	}
+	}
 
+	for(i = 0; i<100; i++) {
 	if (read(fd, str, MSG_SIZE) < 0){
 		printf("Could not read from %s %s\n", path, strerror(errno));
 		return;
 	}
 	printf("%s\n",str);
+	}
 #endif
 }

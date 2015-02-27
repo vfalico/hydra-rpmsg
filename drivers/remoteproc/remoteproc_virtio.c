@@ -102,7 +102,6 @@ static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
 	void *addr;
 	int len, size, ret, i;
 
-	/* we're temporarily limited to two virtqueues per rvdev */
 	if (id >= ARRAY_SIZE(rvdev->vring))
 		return ERR_PTR(-EINVAL);
 
@@ -110,15 +109,11 @@ static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
 		return NULL;
 
 	/* Find available vring for a new vq */
-	for (i = id; i < ARRAY_SIZE(rvdev->vring); i++) {
+	for (i = 0; i < ARRAY_SIZE(rvdev->vring); i++) {
 		rvring = &rvdev->vring[i];
 
-		/* Calling find_vqs twice is bad */
-		if (rvring->vq)
-			return ERR_PTR(-EINVAL);
-
 		/* Use vring not already in use */
-		if (!rvring->rvringh)
+		if (!rvring->rvringh && !rvring->vq)
 			break;
 	}
 	if (i == ARRAY_SIZE(rvdev->vring))
@@ -136,13 +131,13 @@ static struct virtqueue *rp_find_vq(struct virtio_device *vdev,
 	memset(addr, 0, size);
 
 	dev_info(dev, "vring%d: va %p qsz %d notifyid %d\n",
-					id, addr, len, rvring->notifyid);
+					i, addr, len, rvring->notifyid);
 
 	/*
 	 * Create the new vq, and tell virtio we're not interested in
 	 * the 'weak' smp barriers, since we're talking with a real device.
 	 */
-	vq = vring_new_virtqueue(id, len, rvring->align, vdev, false, addr,
+	vq = vring_new_virtqueue(i, len, rvring->align, vdev, false, addr,
 					rproc_virtio_notify, callback, name);
 	if (!vq) {
 		dev_err(dev, "vring_new_virtqueue %s failed\n", name);
@@ -335,15 +330,11 @@ static struct vringh *rp_find_vrh(struct virtio_device *vdev,
 		return ERR_PTR(-EINVAL);
 
 	/* Find available slot for a new host vring */
-	for (i = id; i < ARRAY_SIZE(rvdev->vring); i++) {
+	for (i = 0; i < ARRAY_SIZE(rvdev->vring); i++) {
 		rvring = &rvdev->vring[i];
 
-		/* Calling find_vrhs twice is bad */
-		if (rvring->rvringh)
-			return ERR_PTR(-EINVAL);
-
 		/* Use vring not already in use */
-		if (!rvring->vq)
+		if (!rvring->vq && !rvring->rvringh)
 			break;
 	}
 
@@ -361,7 +352,7 @@ static struct vringh *rp_find_vrh(struct virtio_device *vdev,
 	size = vring_size(len, rvring->align);
 	memset(addr, 0, size);
 
-	dev_dbg(dev, "vring%d: va %p qsz %d notifyid %d\n",
+	dev_dbg(dev, "vringh%d: va %p qsz %d notifyid %d\n",
 					id, addr, len, rvring->notifyid);
 
 	/*
@@ -406,7 +397,6 @@ static int rproc_virtio_find_vrhs(struct virtio_device *vdev, unsigned nhvrs,
 			 struct vringh *vrhs[],
 			 vrh_callback_t *callbacks[])
 {
-	struct rproc *rproc = vdev_to_rproc(vdev);
 	int i, ret;
 
 	for (i = 0; i < nhvrs; ++i) {

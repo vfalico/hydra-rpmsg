@@ -135,6 +135,6 @@ struct rpmsg_recv_blk{
 void rpmsg_client_ping(struct rpmsg_client_vdev *rvdev,
 		 				struct rpmsg_test_args *targs);
 void rpmsg_ping_cb(struct rpmsg_channel *rpdev, void *data, int len,
-						void *priv, unsigned long src);
+						void *priv, u32 src);
 int rpmsg_ping_status(struct rpmsg_client_vdev *rvdev);
 #endif //_RPMSG_CLIENT_H

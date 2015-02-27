@@ -35,6 +35,15 @@ struct rpmsg_dma_pool {
 	size_t align;
 };
 
+struct remote_pool_info {
+	unsigned long va_start;
+	unsigned long va_end;
+	unsigned long pa_start;
+	unsigned long pa_end;
+	size_t pool_size;
+	bool valid;
+};
+
 struct rcv_ctx {
 	struct vringh_kiov riov;
 	unsigned short head;
@@ -85,6 +94,7 @@ struct virtproc_info {
 	struct iovec piov[RPMSG_MAX_IOV_SIZE];
 	struct iovec viov[RPMSG_MAX_IOV_SIZE];
 	struct rpmsg_dma_pool *dma_mem_pool;
+	struct remote_pool_info rpool;
 	bool is_bsp;
 };
 
@@ -96,8 +106,8 @@ struct virtproc_info {
  */
 struct rpmsg_channel_info {
 	char name[RPMSG_NAME_SIZE];
-	unsigned long src;
-	unsigned long dst;
+	u32 src;
+	u32 dst;
 };
 
 /**
@@ -130,8 +140,8 @@ struct rpmsg_var_msg {
 struct rpmsg_req {
 	u8 ptype;
 	void *priv;
-	unsigned long src;
-	unsigned long dst;
+	u32 src;
+	u32 dst;
 	struct rpmsg_var_msg usend;
 	struct rpmsg_var_msg urecv;
 	struct rpmsg_var_msg ksend;
@@ -175,7 +185,6 @@ struct rpmsg_req {
 void rpmsg_virtio_cfg_changed(struct virtproc_info *vrp);
 void rpmsg_setup_recv_buf(struct virtproc_info *vrp, unsigned len);
 void rpmsg_virtio_cfg_changed_work(struct work_struct *work);
-int rpmsg_map_remote_bufs(struct virtproc_info *vrp);
 int rpmsg_map_fixed_buf_pool(struct virtproc_info *vrp, size_t total_buf_space);
 void *get_a_fixed_size_tx_buf(struct virtproc_info *vrp, u16 *idx);
 void rpmsg_virtio_var_size_msg_work(struct work_struct *work);
@@ -183,6 +192,8 @@ void rpmsg_var_recv_done(struct virtqueue *vvq);
 int rpmsg_phy_to_virt_iov(struct virtproc_info *vrp, struct iovec piov[],
 				struct iovec viov[], int iov_size, bool ptov);
 int rpmsg_iounmap_iov(struct iovec iov[], int iov_size, bool ptov);
+void *__rpmsg_ptov(struct virtproc_info *vrp, unsigned long addr, size_t len);
+void rpmsg_cfg_update_pool_info(struct virtproc_info *vrp, unsigned len);
 
 /* temporary virtio host api's routines */
 int virtqueue_get_avail_buf(struct virtqueue *_vq, int *out, int *in,

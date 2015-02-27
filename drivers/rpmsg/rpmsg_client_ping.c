@@ -67,7 +67,7 @@ int inline rpmsg_ping_status(struct rpmsg_client_vdev *rvdev)
 }
 
 void rpmsg_ping_cb(struct rpmsg_channel *rpdev, void *data, int len,
-						void *priv, unsigned long src)
+						void *priv, u32 src)
 {
 	unsigned long t;
 	struct rpmsg_client_vdev *rvdev = priv;
@@ -80,7 +80,7 @@ void rpmsg_ping_cb(struct rpmsg_channel *rpdev, void *data, int len,
 
 	UPDATE_ROUND_TRIP_STATS();
 
-	dev_info(&rpdev->dev, "%d bytes from 0x%lx seq=%d t= %lu rtt=%lu us\n",
+	dev_info(&rpdev->dev, "%d bytes from 0x%x seq=%d t= %lu rtt=%lu us\n",
 			len, src, nrecv, t, triptime);
 
 	rpt->cb(rpdev, data, len, priv, src);

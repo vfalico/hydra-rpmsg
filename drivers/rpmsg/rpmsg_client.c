@@ -162,11 +162,11 @@ int rpmsg_release(struct inode *inode, struct file *f)
 }
 
 void rpmsg_client_cb(struct rpmsg_channel *rpdev, void *data, int len,
-						void *priv, unsigned long src)
+						void *priv, u32 src)
 {
 	struct rpmsg_recv_blk *rblk;
 
-	dev_info(&rpdev->dev, "%s: %d bytes from 0x%lx",__func__, len, src);
+	dev_info(&rpdev->dev, "%s: %d bytes from 0x%x",__func__, len, src);
 
 	rblk = kmalloc(sizeof(*rblk), GFP_ATOMIC);
 	if (!rblk) {
@@ -265,7 +265,7 @@ static int rpmsg_client_probe(struct rpmsg_channel *rpdev)
 	struct device *device = NULL;
 	dev_t devno;
 
-	dev_info(&rpdev->dev, "new channel: 0x%lx -> 0x%lx!\n",
+	dev_info(&rpdev->dev, "new channel: 0x%x -> 0x%x!\n",
 					rpdev->src, rpdev->dst);
 	rcdev = kzalloc(sizeof(*rcdev), GFP_KERNEL);
 	if (IS_ERR(rcdev)) {

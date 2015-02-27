@@ -41,7 +41,7 @@
 char buf[MSG_SIZE];
 
 static void dummy_rpmsg_cb(struct rpmsg_channel *rpdev, void *data, int len,
-						void *priv, unsigned long src)
+						void *priv, u32 src)
 {
 	static unsigned int reply_cnt;
 	int ret;

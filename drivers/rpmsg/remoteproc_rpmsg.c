@@ -39,16 +39,52 @@
 extern struct workqueue_struct *rpmsg_virtio_cfg_wq;
 extern struct workqueue_struct *rpmsg_virtio_rcv_wq;
 
-/* Map the static buffers */
-int rpmsg_map_remote_bufs(struct virtproc_info *vrp)
+void *__rpmsg_ptov(struct virtproc_info *vrp, unsigned long addr, size_t len)
+{
+	unsigned offset;
+	unsigned long va;
+	struct remote_pool_info *rpool = &vrp->rpool;
+
+	/*
+	 * HACK .. till be have interrupt for vdev config space changes.
+	 */
+	if(!rpool->valid && vrp->is_bsp) {
+		//rpmsg_virtio_cfg_changed(vrp);
+		va = phys_to_virt(addr);
+		return va;
+	}
+
+	BUG_ON(addr < rpool->pa_start);
+	BUG_ON(addr > rpool->pa_end);
+
+	offset = addr - rpool->pa_start;
+	va = rpool->va_start + offset;
+
+	BUG_ON(va > rpool->va_end);
+	BUG_ON(va + len > rpool->va_end);
+
+	return (void *)va;
+}
+
+static void __rpmsg_update_rpool_info(struct virtproc_info *vrp, void *va,
+						unsigned long addr, size_t size)
+{
+	struct remote_pool_info *rpool = &vrp->rpool;
+
+	rpool->pa_start = addr;
+	rpool->va_start = (unsigned long)va;
+	rpool->pool_size = size;
+	rpool->pa_end = rpool->pa_start + size;
+	rpool->va_end = rpool->va_start + size;
+	rpool->valid = true;		//TODO Atomic opr
+}
+
+int rpmsg_map_fixed_buf_pool(struct virtproc_info *vrp, size_t total_buf_space)
 {
 	struct virtio_device *vdev = vrp->vdev;
 	struct fw_rsc_vdev_buf_desc desc;
 	unsigned offset;
-	void *va;
-
-	BUG_ON(vrp->sbufs != 0);
-	BUG_ON(vrp->rbufs != 0);
+	void *bufs_va;
 
 	memset(&desc, 0, sizeof(struct fw_rsc_vdev_buf_desc));
 
@@ -63,45 +99,9 @@ int rpmsg_map_remote_bufs(struct virtproc_info *vrp)
 	}
 
 	dev_info(&vrp->vdev->dev, "%s: bsp %d desc.addr %p"
-				" len %u\n",__func__, vrp->is_bsp, (void *)desc.addr,
-				desc.len);
+				" len %u (%zu)\n",__func__, vrp->is_bsp,
+				(void *)desc.addr, desc.len, total_buf_space);
 
-	if(unlikely(!desc.addr || !desc.len))
-		return -1U;
-
-	va = ioremap_cache(desc.addr, desc.len);
-	if(!va) {
-		dev_err(&vrp->vdev->dev, "%s: ioremap_cache failed! phy %p"
-				" len %u\n",__func__, (void *)desc.addr,
-				desc.len);
-		return -1U;
-	}
-
-	dev_err(&vrp->vdev->dev, "%s: ioremap_cache sucess! phy %p virt %p"
-			" len %u\n",__func__, (void *)desc.addr, va, desc.len);
-	vrp->sbufs = va;
-	return 0;
-}
-
-int rpmsg_map_fixed_buf_pool(struct virtproc_info *vrp, size_t total_buf_space)
-{
-	struct virtio_device *vdev = vrp->vdev;
-	struct fw_rsc_vdev_buf_desc desc;
-	unsigned offset;
-	void *bufs_va;
-
-	BUG_ON(vrp->sbufs != 0);
-	BUG_ON(vrp->rbufs != 0);
-
-	memset(&desc, 0, sizeof(struct fw_rsc_vdev_buf_desc));
-
-	offset = offsetof(struct fw_rsc_vdev_config, rproc_desc);
-	vdev->config->get(vdev, offset, (void *)&desc,
-				 sizeof(struct fw_rsc_vdev_buf_desc));
-
-	dev_info(&vrp->vdev->dev, "%s: bsp %d desc.addr %p"
-				" len %u\n",__func__, vrp->is_bsp,
-				(void *)desc.addr, desc.len);
 	if(unlikely(!desc.addr || !desc.len))
 		return -1U;
 
@@ -119,8 +119,7 @@ int rpmsg_map_fixed_buf_pool(struct virtproc_info *vrp, size_t total_buf_space)
 			" len %u\n",__func__, (void *)desc.addr, bufs_va,
 			desc.len);
 
-	vrp->sbufs = bufs_va;
-	vrp->rbufs = bufs_va + total_buf_space / 2;
+	__rpmsg_update_rpool_info(vrp, bufs_va, desc.addr, desc.len);
 
 	return 0;
 }
@@ -128,7 +127,7 @@ int rpmsg_map_fixed_buf_pool(struct virtproc_info *vrp, size_t total_buf_space)
 /*
  * Copy recv buffer address for the remote processor
  */
-void rpmsg_setup_recv_buf(struct virtproc_info *vrp, unsigned len)
+void rpmsg_cfg_update_pool_info(struct virtproc_info *vrp, unsigned len)
 {
 	struct virtio_device *vdev = vrp->vdev;
 	struct fw_rsc_vdev_buf_desc desc;
@@ -170,7 +169,7 @@ void rpmsg_virtio_cfg_changed_work(struct work_struct *work)
 		container_of(work, struct virtproc_info, config_work);
 	int ret;
 
-	ret = rpmsg_map_remote_bufs(vrp);
+	ret = rpmsg_map_fixed_buf_pool(vrp, (vrp->num_bufs * RPMSG_BUF_SIZE));
 	if (ret < 0)
 		dev_err(&vrp->vdev->dev, "rpmsg remote buffer mapping failed\n");
 }
@@ -256,7 +255,7 @@ void __debug_dump_rpmsg_req(struct virtproc_info *vrp, struct rpmsg_req *req,
 		}
 }
 
-static struct rpmsg_hdr *rpmsg_copy_to_user(struct rpmsg_req *req, unsigned long len)
+static struct rpmsg_hdr *rpmsg_copy_to_user(struct rpmsg_req *req, int len)
 {
 	struct rpmsg_hdr *kmsg = req->krecv.data;
 
@@ -349,8 +348,8 @@ static void rpmsg_release_request(struct rpmsg_req *req)
 }
 
 struct rpmsg_req *rpmsg_alloc_var_size_request(struct virtproc_info *vrp,
-		void *sdata, unsigned int slen, void *rdata, unsigned int rlen,
-		unsigned long src, unsigned long dst)
+		void *sdata, int slen, void *rdata, int rlen,
+		u32 src, u32 dst)
 {
 	struct rpmsg_req *req;
 	unsigned char ptype = 0;
@@ -397,28 +396,28 @@ free_request:
  * 1. Add code for input validation.
  * 2. Support for send alone, ie. rdata and rlen are NULL & 0
  */
-int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, unsigned long src,
-			unsigned long dst, void *sdata, unsigned int slen,
-			void *rdata, unsigned int rlen, bool wait)
+int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, u32 src,
+			u32 dst, void *sdata, int slen,
+			void *rdata, int rlen, bool wait)
 {
 	struct virtproc_info *vrp = rpdev->vrp;
 	struct device *dev = &rpdev->dev;
 	struct scatterlist *sgs[2];
 	struct rpmsg_hdr *msg;
 	struct rpmsg_req *req;
-	int err, in, out, in_sgs, out_sgs;
+	int err, in, out, in_sgs=0, out_sgs=0;
 
 	/* No support for wait and retry in case of resource unavailability */
 	wait = false;
 
 	if (src == RPMSG_ADDR_ANY || dst == RPMSG_ADDR_ANY) {
-		dev_err(dev, "invalid addr (src 0x%lx, dst 0x%lx)\n", src, dst);
+		dev_err(dev, "invalid addr (src 0x%x, dst 0x%x)\n", src, dst);
 		return -EINVAL;
 	}
 	/* Trivially validate input */
 	if (!sdata || !rdata || slen == 0 || rlen == 0 || slen > MAX_BUF_SIZE
 			|| rlen > MAX_BUF_SIZE) {
-		dev_err(dev, "Invalid input sdata %p rdata %p slen %u rlen %u",
+		dev_err(dev, "Invalid input sdata %p rdata %p slen %d rlen %d",
 				sdata, rdata, slen, rlen);
 		return -EINVAL;
 	}
@@ -431,7 +430,7 @@ int rpmsg_send_recv_raw(struct rpmsg_channel *rpdev, unsigned long src,
 
 	msg = rpmsg_copy_from_user(req);
 
-	dev_info(dev, "TX From 0x%lx, To 0x%lx, Len %d, Flags %d, Reserved %d\n",
+	dev_info(dev, "TX From 0x%x, To 0x%x, Len %d, Flags %d, Reserved %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
 #if 0
@@ -479,7 +478,7 @@ int rpmsg_send_recv_single(struct virtproc_info *vrp, struct device *dev,
 
 	msg = rpmsg_copy_to_user(req, len);
 
-	dev_info(dev, "From: 0x%lx, To: 0x%lx, Len: %d, Flags: %d, Reserved: %d\n",
+	dev_info(dev, "From: 0x%x, To: 0x%x, Len: %d, Flags: %d, Reserved: %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
 
@@ -543,11 +542,6 @@ void rpmsg_send_recv_done(struct virtproc_info *vrp)
 	};
 
 	dev_dbg(dev, "Received %u variable sized messages\n", msgs_received);
-
-	/* TODO
-	 * Should we tell the remote processor about our wellness ? Is it
-	 * too much of hand shaking ?
-	 */
 }
 
 void rpmsg_virtio_var_size_msg_work(struct work_struct *work)
@@ -560,4 +554,3 @@ void rpmsg_virtio_var_size_msg_work(struct work_struct *work)
 	else
 		rpmsg_dummy_ap_var_size_recv_work(vrp);
 }
-

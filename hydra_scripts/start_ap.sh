@@ -10,5 +10,5 @@ fi
 ./make_links.sh
 
 echo "starting AP on default CPU (1) and second serial console, then starting the networking"
-modprobe dummy_remoteproc serial_number=1 && ./start_tunnel.sh
+modprobe dummy_remoteproc serial_number=0 && ./start_tunnel.sh
 
