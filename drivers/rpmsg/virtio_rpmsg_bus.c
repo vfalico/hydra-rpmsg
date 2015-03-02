@@ -941,7 +941,7 @@ void rpmsg_vrh_recv_done(struct virtio_device *vdev, struct vringh *vrh)
 	unsigned int msgs_received = 0, msgs_dropped = 0;
 	int err;
 
-	vringh_notify_disable_kern(vrh);
+	//vringh_notify_disable_kern(vrh);
 
 	do {
 		if(riov->i == riov->used) {
@@ -976,7 +976,8 @@ exit:
 			dev_info(dev, "vringh_getdesc_kern unkown failure\n");
 			break;
 	}
-	if (msgs_received && vringh_need_notify_kern(vrp->vrh) > 0)
+	//if (msgs_received && vringh_need_notify_kern(vrp->vrh) > 0)
+	if (msgs_received)
 		vringh_notify(vrp->vrh);
 }
 

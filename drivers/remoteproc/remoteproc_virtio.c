@@ -37,7 +37,7 @@ static bool rproc_virtio_notify(struct virtqueue *vq)
 	struct rproc *rproc = rvring->rvdev->rproc;
 	int notifyid = rvring->notifyid;
 
-	dev_dbg(&rproc->dev, "kicking vq index: %d\n", notifyid);
+	dev_info(&rproc->dev, "kicking vq index: %d\n", notifyid);
 
 	rproc->ops->kick(rproc, notifyid);
 	return true;
@@ -50,7 +50,7 @@ static void rproc_virtio_vringh_notify(struct vringh *vrh)
 	struct rproc *rproc = rvring->rvdev->rproc;
 	int notifyid = rvring->notifyid;
 
-	dev_dbg(&rproc->dev, "kicking vq index: %d\n", notifyid);
+	dev_info(&rproc->dev, "kicking vq index: %d\n", notifyid);
 
 	rproc->ops->kick(rproc, notifyid);
 }
@@ -307,6 +307,7 @@ static struct vringh *rproc_create_new_vringh(struct rproc_vring *rvring,
 	}
 
 	rvring->rvringh = rvrh;
+	rvrh->rvring = rvring;
 	return &rvrh->vrh;
 err:
 	kfree(rvrh);

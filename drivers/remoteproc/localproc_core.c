@@ -43,13 +43,14 @@ static bool lproc_virtio_notify(struct virtqueue *vq)
 /* kick the remote processor, and let it know which vring to poke at */
 static void lproc_virtio_vringh_notify(struct vringh *vrh)
 {
+#if 0
 	struct rproc_vring *lvring = vringh_to_rvring(vrh);
-	struct lproc *lproc = (struct lproc *)lvring->rvdev->rproc;
-	int notifyid = lvring->notifyid;
+	struct lproc *lproc;
+	int notifyid;
 
-	dev_dbg(lproc->dev, "kicking vrh index: %d\n", notifyid);
-
-	//lproc->ops->kick(lproc, notifyid);
+	lproc = (struct lproc *)lvring->rvdev->rproc;
+	notifyid = lvring->notifyid;
+#endif
 	dummy_lproc_kick_bsp();
 }
 
@@ -162,6 +163,7 @@ static struct vringh *lproc_create_new_vringh(struct rproc_vring *lvring,
 	}
 
 	lvring->rvringh = lvrh;
+	lvrh->rvring = lvring;
 	return &lvrh->vrh;
 err:
 	kfree(lvrh);
@@ -315,21 +317,34 @@ static irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
 	if(lproc && lproc->priv) {
 		lvdev = lproc->priv;
 		lvring = &lvdev->vring[notifyid];
-		if(notifyid == 2)
-			ret = vring_avail_interrupt(1, lvring->vq);
-		else if (notifyid == 0)
-		 	ret = vring_interrupt(1, lvring->vq);
-		else {
-			if (lvring->rvringh && lvring->rvringh->vringh_cb)
-				lvring->rvringh->vringh_cb(&lvring->rvdev->vdev,
-						&lvring->rvringh->vrh);
-			ret = IRQ_HANDLED;
+		switch (notifyid) {
+			case 0:
+				ret = vring_interrupt(1, lvring->vq);
+				break;
+			case 1:
+				if (lvring->rvringh && lvring->rvringh->vringh_cb){
+					lvring->rvringh->vringh_cb(&lvring->rvdev->vdev,
+							&lvring->rvringh->vrh); 
+					ret = IRQ_HANDLED;
+				} else {
+					printk(KERN_INFO "%s: Failed interrupt!",
+						"notifyid %d ", __func__,
+								notifyid);
+					ret = IRQ_NONE;
+				}
+				break;
+			case 2:
+				ret = vring_avail_interrupt(1, lvring->vq);
+				break;
+			default:
+				printk(KERN_INFO "%s: Failed interrupt!",
+						"notifyid %d ", __func__,
+								notifyid);
+				ret = IRQ_NONE;
 		}
-	} else {
+	} else
 		printk(KERN_INFO "%s: Failed interrupt! lproc %p priv %p\n",
-				__func__, lproc, lproc->priv);
-		return IRQ_NONE;
-	}
+					       __func__, lproc, lproc->priv);
 	return ret;
 }
 
@@ -338,6 +353,7 @@ void dummy_lproc_callback(void *data)
 	struct lproc *lproc = data;
 	int i;
 
+	printk(KERN_INFO "%s lproc %p\n",__func__, lproc);
 	if (unlikely(!lproc)) {
 		printk(KERN_DEBUG "In %s %p\n",__func__, lproc);
 		return;
@@ -416,7 +432,9 @@ static struct vringh *lp_find_vrh(struct virtio_device *vdev,
 	for (i = 0; i < ARRAY_SIZE(lvdev->vring); i++) {
 		lvring = &lvdev->vring[i];
 
-		/* Use vring not already in use */
+		/* HACK:: TODO
+		 * Use vring not already in use
+		 * */
 		if (!lvring->vq && (i == 1) && !lvring->rvringh)
 			break;
 	}

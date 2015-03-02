@@ -16,7 +16,7 @@
 
 #define DEV_NAME	"/dev/crpmsg"
 #define PATH_MAX	80
-//#define PING		1
+#define PING		1
 
 struct rpmsg_test_args {
 	int remote_cpu;
@@ -141,19 +141,19 @@ int main(int argc, char *argv[])
 		return;
 	}
 #else
-	for(i = 0; i<1000; i++) {
+//	for(i = 0; i<1000; i++) {
 	if (write(fd, str, MSG_SIZE) < MSG_SIZE){
 		printf("Could not write to %s %s\n", path, strerror(errno));
 		return;
-	}
+//	}
 	}
 
-	for(i = 0; i<100; i++) {
+//	for(i = 0; i<100; i++) {
 	if (read(fd, str, MSG_SIZE) < 0){
 		printf("Could not read from %s %s\n", path, strerror(errno));
 		return;
 	}
 	printf("%s\n",str);
-	}
+//	}
 #endif
 }
