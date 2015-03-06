@@ -5,6 +5,7 @@ config RPMSG
 	tristate
 	select VIRTIO
 	select VIRTUALIZATION
+	select GENERIC_ALLOCATOR
 
 # RPMSG always gets selected by whoever wants it
 config RPMSG_CLIENT

@@ -43,40 +43,48 @@ void *__rpmsg_ptov(struct virtproc_info *vrp, unsigned long addr, size_t len)
 {
 	unsigned offset;
 	unsigned long va;
-	struct remote_pool_info *rpool = &vrp->rpool;
+	struct pool_info *rp_info = &vrp->rp_info;
 
 	/*
 	 * HACK .. till be have interrupt for vdev config space changes.
 	 */
-	if(!rpool->valid && vrp->is_bsp) {
+	if(!rp_info->valid && vrp->is_bsp) {
 		//rpmsg_virtio_cfg_changed(vrp);
 		va = phys_to_virt(addr);
 		return va;
 	}
 
-	BUG_ON(addr < rpool->pa_start);
-	BUG_ON(addr > rpool->pa_end);
+	BUG_ON(addr < rp_info->pa_start);
+	BUG_ON(addr > rp_info->pa_end);
 
-	offset = addr - rpool->pa_start;
-	va = rpool->va_start + offset;
+	offset = addr - rp_info->pa_start;
+	va = rp_info->va_start + offset;
 
-	BUG_ON(va > rpool->va_end);
-	BUG_ON(va + len > rpool->va_end);
+	BUG_ON(va + len > rp_info->va_end);
 
 	return (void *)va;
 }
 
-static void __rpmsg_update_rpool_info(struct virtproc_info *vrp, void *va,
+void __rpmsg_pool_check(struct pool_info *p_info, void *va, size_t len)
+{
+	unsigned long phy_addr;
+
+	BUG_ON(!va);
+	BUG_ON(!p_info);
+	BUG_ON(va < p_info->va_start || (va + len) > p_info->va_end);
+	phy_addr = __pa(va);
+	BUG_ON(phy_addr < p_info->pa_start || (phy_addr + len) > p_info->pa_end);
+}
+
+void __rpmsg_update_pool_info(struct pool_info *p_info, void *va,
 						unsigned long addr, size_t size)
 {
-	struct remote_pool_info *rpool = &vrp->rpool;
-
-	rpool->pa_start = addr;
-	rpool->va_start = (unsigned long)va;
-	rpool->pool_size = size;
-	rpool->pa_end = rpool->pa_start + size;
-	rpool->va_end = rpool->va_start + size;
-	rpool->valid = true;		//TODO Atomic opr
+	p_info->pa_start = addr;
+	p_info->va_start = (unsigned long)va;
+	p_info->pool_size = size;
+	p_info->pa_end = p_info->pa_start + size;
+	p_info->va_end = p_info->va_start + size;
+	p_info->valid = true;		//TODO Atomic opr
 }
 
 int rpmsg_map_fixed_buf_pool(struct virtproc_info *vrp, size_t total_buf_space)
@@ -119,8 +127,7 @@ int rpmsg_map_fixed_buf_pool(struct virtproc_info *vrp, size_t total_buf_space)
 			" len %u\n",__func__, (void *)desc.addr, bufs_va,
 			desc.len);
 
-	__rpmsg_update_rpool_info(vrp, bufs_va, desc.addr, desc.len);
-
+	__rpmsg_update_pool_info(&vrp->rp_info, bufs_va, desc.addr, desc.len);
 	return 0;
 }
 
@@ -133,11 +140,10 @@ void rpmsg_cfg_update_pool_info(struct virtproc_info *vrp, unsigned len)
 	struct fw_rsc_vdev_buf_desc desc;
 	unsigned offset;
 
-	desc.addr = (unsigned long)vrp->bufs_dma;
+	desc.addr = (unsigned long)vrp->vbufs_dma;
 	desc.len = len;
 
 	BUG_ON(desc.addr == 0);
-	BUG_ON(desc.len != vrp->num_bufs * RPMSG_BUF_SIZE);
 
 	if(vrp->is_bsp) {
 		offset = offsetof(struct fw_rsc_vdev_config, rproc_desc);
@@ -168,8 +174,14 @@ void rpmsg_virtio_cfg_changed_work(struct work_struct *work)
 	struct virtproc_info *vrp =
 		container_of(work, struct virtproc_info, config_work);
 	int ret;
+	int total_buf_size;
 
-	ret = rpmsg_map_fixed_buf_pool(vrp, (vrp->num_bufs * RPMSG_BUF_SIZE));
+	if(vrp->pool)
+		total_buf_size = vrp->pool_size;
+	else
+		total_buf_size = vrp->num_bufs * RPMSG_BUF_SIZE;
+
+	ret = rpmsg_map_fixed_buf_pool(vrp, total_buf_size);
 	if (ret < 0)
 		dev_err(&vrp->vdev->dev, "rpmsg remote buffer mapping failed\n");
 }
@@ -302,7 +314,7 @@ static unsigned int rest_of_page(void *data)
  * Stolen function from 9p Virtio driver.
  */
 
-static int rpmsg_pack_sg_list(struct scatterlist *sg, int start,
+int rpmsg_pack_sg_list(struct scatterlist *sg, int start,
 			int limit, char *data, int count)
 {
 	int s;
@@ -390,7 +402,6 @@ free_request:
 	return req;
 }
 
-#define MAX_BUF_SIZE	(64 * 1024)
 /*
  * TODO
  * 1. Add code for input validation.

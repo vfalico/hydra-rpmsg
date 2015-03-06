@@ -20,22 +20,16 @@
 #define VIRTIO_RPMSG_H
 
 #define	RPMSG_MAX_IOV_SIZE	32
+#define RPMSG_VAR_VIRTQUEUE_NUM	32
+#define MAX_BUF_SIZE	(64 * 1024)
 
-struct pool_pkt_info {
-	size_t base_size;
-	size_t mod_size;
-	int base_cnt;
-	int mod_cnt;
-	int act_size;
+struct buf_info {
+	size_t len;
+	void *addr;
+	struct scatterlist sg[RPMSG_VAR_VIRTQUEUE_NUM];
 };
 
-struct rpmsg_dma_pool {
-	struct dma_pool *pool;
-	size_t size;
-	size_t align;
-};
-
-struct remote_pool_info {
+struct pool_info {
 	unsigned long va_start;
 	unsigned long va_end;
 	unsigned long pa_start;
@@ -80,9 +74,9 @@ struct virtproc_info {
 	struct vringh *vrh;
 	struct rcv_ctx vrh_ctx;
 	void *rbufs, *sbufs;
+	dma_addr_t bufs_dma;
 	unsigned int num_bufs;
 	int last_sbuf;
-	dma_addr_t bufs_dma;
 	struct mutex tx_lock;
 	struct idr endpoints;
 	struct mutex endpoints_lock;
@@ -93,8 +87,13 @@ struct virtproc_info {
 	struct work_struct var_size_recv_work;
 	struct iovec piov[RPMSG_MAX_IOV_SIZE];
 	struct iovec viov[RPMSG_MAX_IOV_SIZE];
-	struct rpmsg_dma_pool *dma_mem_pool;
-	struct remote_pool_info rpool;
+	struct pool_info rp_info;
+	struct pool_info lp_info;
+	struct gen_pool *pool;
+	void *bufs_va;
+	dma_addr_t vbufs_dma;
+	size_t pool_size;
+	struct device *pdev;
 	bool is_bsp;
 };
 
@@ -122,7 +121,6 @@ struct rpmsg_var_msg {
 	void *data;
 };
 
-#define RPMSG_VAR_VIRTQUEUE_NUM	32
 
 /**
  * struct rpmsg_req - a Request structure assosiated with every variable sized
@@ -204,13 +202,17 @@ void __debug_virtqueue(struct virtqueue *_vq, char *fmt);
 void __debug_dump_rpmsg_req(struct virtproc_info *vrp, struct rpmsg_req *req,
 				struct scatterlist *sg, int out, int in,
 				struct iovec iov[],int iov_count);
-
+void __rpmsg_pool_check(struct pool_info *p_info, void *va, size_t len);
+void __rpmsg_update_pool_info(struct pool_info *p_info, void *va,
+					unsigned long addr, size_t size);
 /* dummy routines for rpmsg lproc part */
 void create_dummy_channel_addr(struct rpmsg_channel_info *chinfo);
 void create_dummy_rpmsg_ept(struct virtproc_info *vrp,
 		struct rpmsg_channel *rpdev,
 		struct rpmsg_channel_info *chinfo);
 void rpmsg_dummy_ap_var_size_recv_work(struct virtproc_info *vrp);
+int rpmsg_pack_sg_list(struct scatterlist *sg, int start, int limit, char *data,
+		int count);
 
 /* routines in virtio_rpmsg_bus */
 void __ept_release(struct kref *kref);

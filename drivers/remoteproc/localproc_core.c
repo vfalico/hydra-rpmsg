@@ -143,7 +143,7 @@ static struct vringh *lproc_create_new_vringh(struct rproc_vring *lvring,
 	/* initialize the host virtio ring */
 	lvrh->vringh_cb = callback;
 	lvrh->vrh.notify = lproc_virtio_vringh_notify;
-	memset(lvring->va, 0, vring_size(lvring->len, lvring->align));
+
 	vring_init(&lvrh->vrh.vring, lvring->len, lvring->va, lvring->align);
 
 	/*
@@ -423,7 +423,7 @@ static struct vringh *lp_find_vrh(struct virtio_device *vdev,
 	struct rproc_vring *lvring;
 	struct vringh *vrh;
 	void *addr;
-	int len, size, ret, i;
+	int len, ret, i;
 
 	if (id >= ARRAY_SIZE(lvdev->vring))
 		return ERR_PTR(-EINVAL);
@@ -448,10 +448,6 @@ static struct vringh *lp_find_vrh(struct virtio_device *vdev,
 
 	addr = lvring->va;
 	len = lvring->len;
-
-	/* zero vring */
-	size = vring_size(len, lvring->align);
-	memset(addr, 0, size);
 
 	dev_info(dev, "vringh%d: va %p qsz %d notifyid %d\n",
 					i, addr, len, lvring->notifyid);
