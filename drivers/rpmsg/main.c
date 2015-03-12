@@ -16,7 +16,7 @@
 
 #define DEV_NAME	"/dev/crpmsg"
 #define PATH_MAX	80
-#define PING		1
+//#define PING		0
 
 struct rpmsg_test_args {
 	int remote_cpu;
@@ -107,10 +107,10 @@ static struct rpmsg_test_args *rpmsg_get_test_args(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
 	char path[PATH_MAX];
-	int fd, ret, id = 0, i;
+	int fd, ret, id = 0, i, c, size;
 	struct rpmsg_test_args *targs;
 	unsigned long addr;
-	char str[MSG_SIZE];
+	char *sbuf, *rbuf;
 
 	snprintf(path, PATH_MAX, DEV_NAME"%d", id);
 	fd = open(path, O_RDWR);
@@ -141,19 +141,31 @@ int main(int argc, char *argv[])
 		return;
 	}
 #else
-//	for(i = 0; i<1000; i++) {
-	if (write(fd, str, MSG_SIZE) < MSG_SIZE){
-		printf("Could not write to %s %s\n", path, strerror(errno));
-		return;
-//	}
-	}
+	c = atoi(argv[1]);
+	size = atoi(argv[2]);
 
-//	for(i = 0; i<100; i++) {
-	if (read(fd, str, MSG_SIZE) < 0){
-		printf("Could not read from %s %s\n", path, strerror(errno));
-		return;
+	assert(c >= 0);
+	assert(size > 0);
+
+	sbuf = (char *) malloc(size);
+	rbuf = (char *) malloc(size);
+
+	for(i = 0; i < c; i++) {
+		if (write(fd, sbuf, size) < size){
+			printf("Could not write to %s %s\n", path, strerror(errno));
+			return;
+		}
 	}
-	printf("%s\n",str);
-//	}
+#if 0
+	for(i = 0; i < c; i++) {
+		if (read(fd, rbuf, size) < 0){
+			printf("Could not read from %s %s\n", path, strerror(errno));
+			return;
+		}
+		printf("(%s)\n",rbuf);
+	}
+#endif
+	free(rbuf);
+	free(sbuf);
 #endif
 }

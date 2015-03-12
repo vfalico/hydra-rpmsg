@@ -498,6 +498,69 @@ static int rpmsg_destroy_channel(struct virtproc_info *vrp,
 	return 0;
 }
 
+static void free_tx_buf(struct virtproc_info *vrp, struct buf_info *tx_info)
+{
+	gen_pool_free(vrp->pool, (long unsigned int)tx_info->addr, tx_info->len);
+	kfree(tx_info);
+}
+
+static unsigned short release_tx_buf(struct virtproc_info *vrp)
+{
+	unsigned int len;
+	unsigned short count = 0;
+	struct buf_info *tx_info;
+
+	mutex_lock(&vrp->tx_lock);
+
+	while(tx_info = virtqueue_get_buf(vrp->svq, &len)) {
+		free_tx_buf(vrp, tx_info);
+		count++;
+	}
+
+	dev_info(&vrp->vdev->dev, "%s freed %d tx buffers\n", __func__, count);
+
+	mutex_unlock(&vrp->tx_lock);
+	return count;
+}
+
+static struct buf_info *get_var_tx_buf(struct virtproc_info *vrp, size_t len)
+{
+	struct buf_info *tx_info;
+	unsigned short free_count = 0;
+
+	BUG_ON(!vrp->pool);
+
+	if(vrp->svq->num_free < virtqueue_get_vring_size(vrp->svq)/2)
+		free_count = release_tx_buf(vrp);
+
+	tx_info = kzalloc(sizeof(*tx_info), GFP_ATOMIC);
+	if(!tx_info)
+		return NULL;
+
+	tx_info->len = len;
+
+	/* support multiple concurrent senders */
+	mutex_lock(&vrp->tx_lock);
+
+	tx_info->addr = (void *)gen_pool_alloc(vrp->pool, tx_info->len);
+	if(unlikely(!tx_info->addr))
+		goto err;
+
+	__rpmsg_pool_check(&vrp->lp_info, tx_info->addr, tx_info->len);
+
+	mutex_unlock(&vrp->tx_lock);
+
+	return tx_info;
+err:
+	mutex_unlock(&vrp->tx_lock);
+	BUG_ON(free_count > 0);
+	if(free_count == 0)
+		(void)release_tx_buf(vrp);
+
+	kfree(tx_info);
+	return NULL;
+}
+
 /* super simple buffer "allocator" that is just enough for now */
 static void *get_a_tx_buf(struct virtproc_info *vrp)
 {
@@ -520,47 +583,6 @@ static void *get_a_tx_buf(struct virtproc_info *vrp)
 	mutex_unlock(&vrp->tx_lock);
 
 	return ret;
-}
-
-static struct buf_info *get_var_tx_buf(struct virtproc_info *vrp, size_t len)
-{
-	struct buf_info *tx_info;
-
-	tx_info = kzalloc(sizeof(*tx_info), GFP_ATOMIC);
-	if(!tx_info)
-		return NULL;
-
-	tx_info->len = len;
-
-	/* support multiple concurrent senders */
-	mutex_lock(&vrp->tx_lock);
-
-	if (vrp->pool) {
-		tx_info->addr = (void *)gen_pool_alloc(vrp->pool, tx_info->len);
-		__rpmsg_pool_check(&vrp->lp_info, tx_info->addr, tx_info->len);
-		if(unlikely(!tx_info->addr)) {
-			kfree(tx_info);
-			return NULL;
-		}
-	}
-
-	mutex_unlock(&vrp->tx_lock);
-
-	return tx_info;
-}
-
-static void release_var_tx_buf(struct virtproc_info *vrp)
-{
-	unsigned int len;
-	struct buf_info *tx_info;
-
-	tx_info = virtqueue_get_buf(vrp->svq, &len);
-	dev_info(&vrp->vdev->dev, "%s tx_info %p\n",__func__,tx_info);
-	if(tx_info) {
-		gen_pool_free(vrp->pool, (long unsigned int)tx_info->addr,
-								tx_info->len);
-		kfree(tx_info);
-	}
 }
 
 /**
@@ -682,16 +704,10 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	tx_info = get_var_tx_buf(vrp, len + sizeof(*msg));
 	if (!tx_info && !wait)
 		return -ENOMEM;
-
 	/* no free buffer ? wait for one (but bail after 15 seconds) */
 	while (!tx_info) {
 		/* enable "tx-complete" interrupts, if not already enabled */
-
-		dev_info(dev, "%s No tx buffer\n",__func__);
-
 		rpmsg_upref_sleepers(vrp);
-
-		release_var_tx_buf(vrp);
 
 		/*
 		 * sleep until a free buffer is available or 15 secs elapse.
@@ -700,7 +716,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 		 * if later this happens to be required, it'd be easy to add.
 		 */
 		err = wait_event_interruptible_timeout(vrp->sendq,
-					(tx_info= get_var_tx_buf(vrp, len + sizeof(*msg))),
+					(tx_info = get_var_tx_buf(vrp, len + sizeof(*msg))),
 					msecs_to_jiffies(15000));
 
 		/* disable "tx-complete" interrupts if we're the last sleeper */
@@ -731,7 +747,6 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	sg_init_table(tx_info->sg, RPMSG_VAR_VIRTQUEUE_NUM);
 	out = rpmsg_pack_sg_list(tx_info->sg, 0, RPMSG_VAR_VIRTQUEUE_NUM,
 					(char *)msg, sizeof(*msg) + len);
-	 __debug_dump_rpmsg_req(vrp, NULL, tx_info->sg, out, 0, NULL, 0);
 	mutex_lock(&vrp->tx_lock);
 
 	/* add message to the remote processor's virtqueue */
@@ -743,13 +758,13 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 		 * this will wait for a buffer management overhaul.
 		 */
 		dev_err(dev, "virtqueue_add_outbuf failed: %d\n", err);
+		BUG_ON(err == -ENOMEM);
 		goto out;
 	}
 	/* tell the remote processor it has a pending message to read */
 	virtqueue_kick(vrp->svq);
 out:
 	mutex_unlock(&vrp->tx_lock);
-	release_var_tx_buf(vrp);
 	return err;
 }
 EXPORT_SYMBOL(rpmsg_send_offchannel_raw);
@@ -862,7 +877,7 @@ static void rpmsg_xmit_done(struct virtqueue *svq)
 {
 	struct virtproc_info *vrp = svq->vdev->priv;
 
-	dev_dbg(&svq->vdev->dev, "%s vq: %s\n", __func__, svq->name);
+	dev_info(&svq->vdev->dev, "%s vq: %s\n", __func__, svq->name);
 
 	/* wake up potential senders that are waiting for a tx buffer */
 	wake_up_interruptible(&vrp->sendq);
@@ -927,16 +942,13 @@ int rpmsg_recv_single_vrh(struct virtproc_info *vrp, struct device *dev,
 	struct rpmsg_endpoint *ept;
 	struct rpmsg_hdr *msg = msg;
 	void *data;
-	size_t len;
+	size_t len, dlen;
 	int err = 0;
 
 	BUG_ON(riov->i == riov->used);
 	BUG_ON(riov->i != 0);
 
 	do {
-		dev_info(dev, "%s iov_base %p iov_len %zu\n",__func__,
-						riov->iov[riov->i].iov_base,
-						riov->iov[riov->i].iov_len);
 		len = riov->iov[riov->i].iov_len;
 		data = __rpmsg_ptov(vrp,
 				(unsigned long)riov->iov[riov->i].iov_base, len);
@@ -945,9 +957,10 @@ int rpmsg_recv_single_vrh(struct virtproc_info *vrp, struct device *dev,
 			msg = data;
 			data = msg->data;
 			len -= sizeof(struct rpmsg_hdr);
+			dlen = msg->len;
 		}
 		dev_info(dev, "From: 0x%x, To: 0x%x, Len: %zu, Flags: %d, Reserved: %d\n",
-					msg->src, msg->dst, msg->len,
+					msg->src, msg->dst, len,
 					msg->flags, msg->reserved);
 		/* use the dst addr to fetch the callback of the appropriate user */
 
@@ -978,7 +991,10 @@ int rpmsg_recv_single_vrh(struct virtproc_info *vrp, struct device *dev,
 			err++;
 		}
 		++riov->i;
+		dlen -= len;
 	} while(riov->i != riov->used);
+
+	BUG_ON(dlen != 0);
 
 	return err;
 }
@@ -991,9 +1007,12 @@ void rpmsg_vrh_recv_done(struct virtio_device *vdev, struct vringh *vrh)
 	unsigned int msgs_received = 0, msgs_dropped = 0;
 	int err;
 
-	//vringh_notify_disable_kern(vrh);
+	vringh_notify_disable_kern(vrh);
+
 	do {
 		if(riov->i == riov->used) {
+			dev_info(dev, "riov.i %d riov.used %d ctx.head %x\n",
+					riov->i, riov->used, vrp->vrh_ctx.head);
 			if(vrp->vrh_ctx.head != USHRT_MAX){
 				vringh_complete_kern(vrp->vrh,
 						vrp->vrh_ctx.head,
@@ -1025,8 +1044,8 @@ exit:
 			dev_info(dev, "vringh_getdesc_kern unkown failure\n");
 			break;
 	}
-	//if (msgs_received && vringh_need_notify_kern(vrp->vrh) > 0)
-	if (msgs_received)
+	if (msgs_received && vringh_need_notify_kern(vrp->vrh) > 0)
+	//if (msgs_received)
 		vringh_notify(vrp->vrh);
 }
 

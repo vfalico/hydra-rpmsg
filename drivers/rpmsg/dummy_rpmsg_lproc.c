@@ -45,11 +45,12 @@ static void dummy_rpmsg_cb(struct rpmsg_channel *rpdev, void *data, int len,
 {
 	static unsigned int reply_cnt;
 	int ret;
-
+#if 0
 	len = snprintf(buf, MSG_SIZE, "Reply from lproc %u",++reply_cnt);
 	ret = rpmsg_sendto(rpdev, buf, len, src);
 	if(ret)
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
+#endif
 }
 
 void create_dummy_channel_addr(struct rpmsg_channel_info *chinfo)

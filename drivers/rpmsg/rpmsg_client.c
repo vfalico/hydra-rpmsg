@@ -136,9 +136,6 @@ rpmsg_write(struct file *f, const char __user *buf, size_t count, loff_t *ppos)
 	struct rpmsg_channel *rpdev = rvdev->rcdev->rpdev;
 	int ret;
 
-	if(count + sizeof(struct rpmsg_hdr) > 512)
-		return -EINVAL;
-
 	if (f->f_flags & O_NONBLOCK)
 		ret = rpmsg_trysend(rpdev, (void *)buf, (int)count);
 	else
