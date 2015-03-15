@@ -56,7 +56,7 @@ int rpmsg_open(struct inode *inode, struct file *f)
 
 	rvdev->rcdev = rcdev;
 	f->private_data = rvdev;
-	return nonseekable_open(inode, f);;
+	return nonseekable_open(inode, f);
 }
 
 static inline void rpmsg_queue(struct rpmsg_recv_blk *rblk,
@@ -141,8 +141,8 @@ rpmsg_write(struct file *f, const char __user *buf, size_t count, loff_t *ppos)
 	else
 		ret = rpmsg_send(rpdev, (void *)buf, (int)count);
 
-	if(ret)
-		return ret;
+	if(ret < 0)
+		return -ENOMEM;
 
 	return count;
 }

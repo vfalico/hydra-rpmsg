@@ -517,8 +517,6 @@ static unsigned short release_tx_buf(struct virtproc_info *vrp)
 		count++;
 	}
 
-	dev_info(&vrp->vdev->dev, "%s freed %d tx buffers\n", __func__, count);
-
 	mutex_unlock(&vrp->tx_lock);
 	return count;
 }
@@ -530,9 +528,15 @@ static struct buf_info *get_var_tx_buf(struct virtproc_info *vrp, size_t len)
 
 	BUG_ON(!vrp->pool);
 
-	if(vrp->svq->num_free < virtqueue_get_vring_size(vrp->svq)/2)
+	if(vrp->svq->num_free < (virtqueue_get_vring_size(vrp->svq) >> 2)) {
 		free_count = release_tx_buf(vrp);
-
+		if(!free_count && vrp->svq->num_free < 16) {
+			dev_info(&vrp->vdev->dev, "%s vring_num_free %d last "
+					"free_count %d\n", __func__,
+					vrp->svq->num_free, free_count);
+			return NULL;
+		}
+	}
 	tx_info = kzalloc(sizeof(*tx_info), GFP_ATOMIC);
 	if(!tx_info)
 		return NULL;
@@ -549,7 +553,6 @@ static struct buf_info *get_var_tx_buf(struct virtproc_info *vrp, size_t len)
 	__rpmsg_pool_check(&vrp->lp_info, tx_info->addr, tx_info->len);
 
 	mutex_unlock(&vrp->tx_lock);
-
 	return tx_info;
 err:
 	mutex_unlock(&vrp->tx_lock);
@@ -682,7 +685,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	struct device *dev = &rpdev->dev;
 	struct rpmsg_hdr *msg;
 	struct buf_info *tx_info;
-	int err, out;
+	int err = 0, out;
 
 	/* bcasting isn't allowed */
 	if (src == RPMSG_ADDR_ANY || dst == RPMSG_ADDR_ANY) {
@@ -942,7 +945,7 @@ int rpmsg_recv_single_vrh(struct virtproc_info *vrp, struct device *dev,
 	struct rpmsg_endpoint *ept;
 	struct rpmsg_hdr *msg = msg;
 	void *data;
-	size_t len, dlen;
+	size_t len, dlen = 0;
 	int err = 0;
 
 	BUG_ON(riov->i == riov->used);
@@ -1007,11 +1010,11 @@ void rpmsg_vrh_recv_done(struct virtio_device *vdev, struct vringh *vrh)
 	unsigned int msgs_received = 0, msgs_dropped = 0;
 	int err;
 
-	vringh_notify_disable_kern(vrh);
+	//vringh_notify_disable_kern(vrh);
 
 	do {
 		if(riov->i == riov->used) {
-			dev_info(dev, "riov.i %d riov.used %d ctx.head %x\n",
+			dev_info(dev, "riov.i %d riov.used %d ctx.head %d\n",
 					riov->i, riov->used, vrp->vrh_ctx.head);
 			if(vrp->vrh_ctx.head != USHRT_MAX){
 				vringh_complete_kern(vrp->vrh,
@@ -1030,6 +1033,8 @@ void rpmsg_vrh_recv_done(struct virtio_device *vdev, struct vringh *vrh)
 			continue;
 		}
 		msgs_received++;
+		if(msgs_received >= (vrp->vrh->vring.num >> 2))
+			break;
 	} while(true);
 exit:
 	switch(err) {
@@ -1045,7 +1050,6 @@ exit:
 			break;
 	}
 	if (msgs_received && vringh_need_notify_kern(vrp->vrh) > 0)
-	//if (msgs_received)
 		vringh_notify(vrp->vrh);
 }
 
@@ -1235,10 +1239,10 @@ static int rpmsg_probe(struct virtio_device *vdev)
 
 	vringh_kiov_init(&vrp->vrh_ctx.riov, NULL, 0);
 	vrp->vrh_ctx.head = USHRT_MAX;
-
+#if 0
 	INIT_WORK(&vrp->config_work, rpmsg_virtio_cfg_changed_work);
 	INIT_WORK(&vrp->var_size_recv_work, rpmsg_virtio_var_size_msg_work);
-
+#endif
 	/* Send the initial name service message from remote processor */
 	if(!vrp->is_bsp){
 		struct rpmsg_channel *rpdev;
@@ -1330,7 +1334,7 @@ static struct virtio_driver virtio_ipc_driver = {
 static int __init rpmsg_init(void)
 {
 	int ret = 0;
-
+#if 0
 	rpmsg_virtio_cfg_wq = alloc_workqueue("virtio-rpmsg-cfg", 0, 0);
 	if (!rpmsg_virtio_cfg_wq)
 		return -ENOMEM;
@@ -1338,7 +1342,7 @@ static int __init rpmsg_init(void)
 	rpmsg_virtio_rcv_wq = alloc_workqueue("virtio-rpmsg-recv", 0, 0);
 	if (!rpmsg_virtio_rcv_wq)
 		goto free_cfg_workqueue;
-
+#endif
 	ret = bus_register(&rpmsg_bus);
 	if (ret) {
 		pr_err("failed to register rpmsg bus: %d\n", ret);
@@ -1355,9 +1359,11 @@ static int __init rpmsg_init(void)
 unregister_bus:
 	bus_unregister(&rpmsg_bus);
 free_rcv_workqueue:
+#if 0
 	destroy_workqueue(rpmsg_virtio_rcv_wq);
 free_cfg_workqueue:
 	destroy_workqueue(rpmsg_virtio_cfg_wq);
+#endif
 	return ret;
 }
 subsys_initcall(rpmsg_init);
