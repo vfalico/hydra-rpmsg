@@ -100,7 +100,6 @@ rpmsg_read(struct file *f, char __user *buf, size_t count, loff_t *ppos)
 	struct rpmsg_recv_blk *rblk;
 	int ret, copied;
 
-	dev_info(&rpdev->dev, "%s: entry\n",__func__);
 	rblk = rpmsg_dequeue(&rcdev->recvqueue);
 	if (!rblk) {
 		if (f->f_flags & O_NONBLOCK)
@@ -110,8 +109,9 @@ rpmsg_read(struct file *f, char __user *buf, size_t count, loff_t *ppos)
 		if (ret)
 			return ret;
 	}
-	dev_info(&rpdev->dev, "%s: %d bytes from %p ",__func__, rblk->len,
-			(void *)rblk->addr);
+
+	dev_info(&rpdev->dev, "%s: %d bytes from %u ",__func__,
+						rblk->len, rblk->addr);
 	if(rblk->len > count) {
 		dev_err(&rpdev->dev, "%s: packet too big %d > %zu\n",__func__,
 							rblk->len, count);
@@ -178,6 +178,27 @@ void rpmsg_client_cb(struct rpmsg_channel *rpdev, void *data, int len,
 	wake_up_interruptible(&rcdev->recvwait);
 }
 
+void rpmsg_ept_cb(struct rpmsg_channel *rpdev, void *data, int len,
+						void *priv, u32 src)
+{
+	struct rpmsg_recv_blk *rblk;
+
+	dev_info(&rpdev->dev, "%s: %d bytes from 0x%x",__func__, len, src);
+
+	rblk = kmalloc(sizeof(*rblk), GFP_ATOMIC);
+	if (!rblk) {
+		dev_err(&rpdev->dev, "kmalloc failed!\n");
+		return;
+	}
+	rblk->addr = src;
+	rblk->priv = priv;
+	rblk->len = len;
+	rblk->data = data;
+	rpmsg_queue(rblk, &rcdev->recvqueue);
+	wake_up_interruptible(&rcdev->recvwait);
+}
+
+
 long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
 	struct rpmsg_client_vdev *rvdev = f->private_data;
@@ -188,12 +209,29 @@ long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 		case RPMSG_CLIENT_TEST_IOCTL:
+		{
+			struct rpmsg_endpoint *ept;
+			unsigned int addr;
+			rpmsg_rx_cb_t cb = rpmsg_ping_cb;
+
 			k_targs = kmalloc(sizeof(*k_targs), GFP_KERNEL);
 			if (!k_targs)
 				return -ENOMEM;
 
 			if (copy_from_user(k_targs, argp, sizeof(*k_targs)))
 				return -EFAULT;
+
+			addr = k_targs->ept_addr;
+			ept = rpmsg_create_ept(rpdev, cb, rvdev, addr);
+			if (!ept) {
+				dev_err(&rpdev->dev, "failed to create ept\n");
+				return -ENOMEM;
+			}
+			rvdev->src = addr;
+			rvdev->ept = ept;
+			ept->priv = rvdev;
+			printk(KERN_INFO "%s create_ept ept_addr=%u ept=%p\n",
+					__func__, rvdev->src, rvdev->ept);
 
 			init_waitqueue_head(&rvdev->client_wait);
 
@@ -206,13 +244,14 @@ long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 			}
 			kfree(k_targs);
 			break;
+		}
 		case RPMSG_CLIENT_CREATE_EPT_IOCTL:
 		{
 			struct rpmsg_endpoint *ept;
-			unsigned long addr = arg;
-			rpmsg_rx_cb_t cb = rpmsg_ping_cb;
+			unsigned int addr = arg;
+			rpmsg_rx_cb_t cb = rpmsg_ept_cb;
 
-			printk(KERN_INFO "%s create_ept cmd=%d ept_addr=%lu\n",
+			printk(KERN_INFO "%s create_ept cmd=%d ept_addr=%u\n",
 					__func__, cmd, addr);
 
 			ept = rpmsg_create_ept(rpdev, cb, rvdev, addr);
@@ -223,15 +262,15 @@ long rpmsg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 			rvdev->src = addr;
 			rvdev->ept = ept;
 			ept->priv = rvdev;
-			printk(KERN_INFO "%s create_ept ept_addr=%lu ept=%p\n",
+			printk(KERN_INFO "%s create_ept ept_addr=%u ept=%p\n",
 					__func__, rvdev->src, rvdev->ept);
 			break;
 		}
 		case RPMSG_CLIENT_DESTROY_EPT_IOCTL:
 		{
-			unsigned long addr = arg;
+			unsigned int addr = arg;
 
-			printk(KERN_INFO "%s delete_ept cmd=%d ept_addr=%lu\n",
+			printk(KERN_INFO "%s delete_ept cmd=%d ept_addr=%u\n",
 					__func__, cmd, addr);
 
 			rpmsg_destroy_ept(rvdev->ept);

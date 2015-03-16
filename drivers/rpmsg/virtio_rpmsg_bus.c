@@ -151,7 +151,7 @@ static struct rpmsg_endpoint *__rpmsg_create_ept(struct virtproc_info *vrp,
 		return NULL;
 	}
 
-	dev_dbg(dev, "%s:%s vrp %p rpdev %p priv %p addr %u\n",
+	dev_info(dev, "%s:%s vrp %p rpdev %p priv %p addr %u\n",
 			(vrp->is_bsp ? "host" : "lproc"),__func__, vrp, rpdev,
 			priv, addr);
 
@@ -498,7 +498,7 @@ static int rpmsg_destroy_channel(struct virtproc_info *vrp,
 	return 0;
 }
 
-static void free_tx_buf(struct virtproc_info *vrp, struct buf_info *tx_info)
+static inline void free_tx_buf(struct virtproc_info *vrp, struct buf_info *tx_info)
 {
 	gen_pool_free(vrp->pool, (long unsigned int)tx_info->addr, tx_info->len);
 	kfree(tx_info);
@@ -510,14 +510,10 @@ static unsigned short release_tx_buf(struct virtproc_info *vrp)
 	unsigned short count = 0;
 	struct buf_info *tx_info;
 
-	mutex_lock(&vrp->tx_lock);
-
 	while(tx_info = virtqueue_get_buf(vrp->svq, &len)) {
 		free_tx_buf(vrp, tx_info);
 		count++;
 	}
-
-	mutex_unlock(&vrp->tx_lock);
 	return count;
 }
 
@@ -525,42 +521,42 @@ static struct buf_info *get_var_tx_buf(struct virtproc_info *vrp, size_t len)
 {
 	struct buf_info *tx_info;
 	unsigned short free_count = 0;
+	unsigned short vring_size = virtqueue_get_vring_size(vrp->svq);
 
 	BUG_ON(!vrp->pool);
 
-	if(vrp->svq->num_free < (virtqueue_get_vring_size(vrp->svq) >> 2)) {
+	mutex_lock(&vrp->tx_lock);
+
+	if(vrp->svq->num_free < vring_size >> 2) {
 		free_count = release_tx_buf(vrp);
 		if(!free_count && vrp->svq->num_free < 16) {
 			dev_info(&vrp->vdev->dev, "%s vring_num_free %d last "
 					"free_count %d\n", __func__,
 					vrp->svq->num_free, free_count);
-			return NULL;
+			goto retry_later;
 		}
 	}
 	tx_info = kzalloc(sizeof(*tx_info), GFP_ATOMIC);
 	if(!tx_info)
-		return NULL;
+		goto retry_later;
+
+	tx_info->addr = (void *)gen_pool_alloc(vrp->pool, len);
+	if(unlikely(!tx_info->addr))
+		goto pool_empty;
 
 	tx_info->len = len;
-
-	/* support multiple concurrent senders */
-	mutex_lock(&vrp->tx_lock);
-
-	tx_info->addr = (void *)gen_pool_alloc(vrp->pool, tx_info->len);
-	if(unlikely(!tx_info->addr))
-		goto err;
-
 	__rpmsg_pool_check(&vrp->lp_info, tx_info->addr, tx_info->len);
 
 	mutex_unlock(&vrp->tx_lock);
 	return tx_info;
-err:
-	mutex_unlock(&vrp->tx_lock);
-	BUG_ON(free_count > 0);
-	if(free_count == 0)
-		(void)release_tx_buf(vrp);
 
+pool_empty:
+	BUG_ON(free_count > 0);
+	if(!free_count)
+		release_tx_buf(vrp);
 	kfree(tx_info);
+retry_later:
+	mutex_unlock(&vrp->tx_lock);
 	return NULL;
 }
 
@@ -1010,8 +1006,6 @@ void rpmsg_vrh_recv_done(struct virtio_device *vdev, struct vringh *vrh)
 	unsigned int msgs_received = 0, msgs_dropped = 0;
 	int err;
 
-	//vringh_notify_disable_kern(vrh);
-
 	do {
 		if(riov->i == riov->used) {
 			dev_info(dev, "riov.i %d riov.used %d ctx.head %d\n",
@@ -1041,6 +1035,7 @@ exit:
 		case 0:
 			dev_info(dev, "Received %u messages, dropped %u messages\n",
 						msgs_received, msgs_dropped);
+			BUG_ON(msgs_dropped > 0);
 			break;
 		case -ENOMEM:
 			dev_info(dev, "vringh_getdesc_kern failed with no mem\n");
@@ -1251,7 +1246,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		err = rpmsg_map_fixed_buf_pool(vrp, vrp->pool_size);
 		if(err < 0)
 			dev_err(&vrp->vdev->dev, "rpmsg remote buffer mapping failed\n");
-
+#if 0
 		create_dummy_channel_addr(&chinfo);
 
 		rpdev = rpmsg_create_channel(vrp, &chinfo);
@@ -1259,6 +1254,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 			dev_err(&vdev->dev, "rpmsg_create_channel failed\n");
 
 		create_dummy_rpmsg_ept(vrp, rpdev, &chinfo);
+#endif
 	}
 
 	dev_info(&vdev->dev, "rpmsg %s is online\n",(vrp->is_bsp ?

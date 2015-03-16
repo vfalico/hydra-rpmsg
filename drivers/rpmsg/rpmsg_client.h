@@ -26,13 +26,6 @@ struct rpmsg_client_stats {
 	struct rpmsg_client_timestamp timestamps[MAX_TEST_STATE];
 };
 
-enum rpmsg_ptest {
-	RPMSG_NULL_TEST,
-	RPMSG_FIXED_SIZE_LATENCY,
-	RPMSG_VAR_SIZE_LATENCY,
-	RPMSG_MAX_TEST
-};
-
 #define G (*(struct rpmsg_client_stats*)&gstats)
 #define nsend		(G.nsend)
 #define nrecv		(G.nrecv)
@@ -96,16 +89,6 @@ enum rpmsg_ptest {
 	}						\
 } while(0)
 
-struct rpmsg_test_args {
-	int remote_cpu;
-	int test_type;
-	int num_runs;
-	int sbuf_size;
-	int rbuf_size;
-	int rpmsg_ept;
-	int wait;
-};
-
 struct rpmsg_client_device {
 	int id;
 	void *priv;
@@ -117,7 +100,7 @@ struct rpmsg_client_device {
 };
 
 struct rpmsg_client_vdev {
-	unsigned long src;
+	unsigned int src;
 	void *priv;
 	struct rpmsg_client_device *rcdev;
 	struct rpmsg_endpoint *ept;
@@ -127,7 +110,7 @@ struct rpmsg_client_vdev {
 struct rpmsg_recv_blk{
 	int len;
 	void  *priv;
-	unsigned long addr;
+	unsigned int addr;
 	const void *data;
 	struct list_head link;
 };
