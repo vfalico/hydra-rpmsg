@@ -36,3 +36,6 @@ ifconfig -a
 ps faux | grep tunnel | grep -v grep || echo none 2>&1 > /dev/kmsg
 free -m
 telnetd -l /bin/bash
+insmod /kmod/rpmsg.ko
+insmod /kmod/client_rpmsg.ko
+mknod -m 666 /dev/crpmsg0 c 252 0

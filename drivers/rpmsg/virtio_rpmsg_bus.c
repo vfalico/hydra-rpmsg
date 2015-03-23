@@ -510,7 +510,7 @@ static unsigned short release_tx_buf(struct virtproc_info *vrp)
 	unsigned short count = 0;
 	struct buf_info *tx_info;
 
-	while(tx_info = virtqueue_get_buf(vrp->svq, &len)) {
+	while((tx_info = virtqueue_get_buf(vrp->svq, &len))) {
 		free_tx_buf(vrp, tx_info);
 		count++;
 	}
@@ -558,30 +558,6 @@ pool_empty:
 retry_later:
 	mutex_unlock(&vrp->tx_lock);
 	return NULL;
-}
-
-/* super simple buffer "allocator" that is just enough for now */
-static void *get_a_tx_buf(struct virtproc_info *vrp)
-{
-	unsigned int len;
-	void *ret;
-
-	/* support multiple concurrent senders */
-	mutex_lock(&vrp->tx_lock);
-
-	/*
-	 * either pick the next unused tx buffer
-	 * (half of our buffers are used for sending messages)
-	 */
-	if (vrp->last_sbuf < vrp->num_bufs / 2)
-		ret = vrp->sbufs + RPMSG_BUF_SIZE * vrp->last_sbuf++;
-	/* or recycle a used one */
-	else
-		ret = virtqueue_get_buf(vrp->svq, &len);
-
-	mutex_unlock(&vrp->tx_lock);
-
-	return ret;
 }
 
 /**
@@ -679,8 +655,8 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 {
 	struct virtproc_info *vrp = rpdev->vrp;
 	struct device *dev = &rpdev->dev;
-	struct rpmsg_hdr *msg;
 	struct buf_info *tx_info;
+	struct rpmsg_hdr *msg;
 	int err = 0, out;
 
 	/* bcasting isn't allowed */
@@ -690,10 +666,11 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	}
 
 	/*
-	 * One of the possible improvements here is to support
+	 * One another of the possible improvements here is to support
 	 * user-provided buffers (and then we can also support zero-copy
 	 * messaging)
-	 * */
+	 *
+	 */
 	if (len > MAX_BUF_SIZE - sizeof(struct rpmsg_hdr)) {
 		dev_err(dev, "message is too big (%d)\n", len);
 		return -EMSGSIZE;
@@ -703,6 +680,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	tx_info = get_var_tx_buf(vrp, len + sizeof(*msg));
 	if (!tx_info && !wait)
 		return -ENOMEM;
+
 	/* no free buffer ? wait for one (but bail after 15 seconds) */
 	while (!tx_info) {
 		/* enable "tx-complete" interrupts, if not already enabled */
@@ -736,14 +714,14 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	msg->reserved = 0;
 	memcpy(msg->data, data, len);
 
-	dev_info(dev, "TX From 0x%x, To 0x%x, Len %d, Flags %d, Reserved %d\n",
+	dev_dbg(dev, "TX From 0x%x, To 0x%x, Len %d, Flags %d, Reserved %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
-#if 0
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio TX: ", DUMP_PREFIX_NONE, 16, 1,
 					msg, sizeof(*msg) + msg->len, true);
-#endif
+
 	sg_init_table(tx_info->sg, RPMSG_VAR_VIRTQUEUE_NUM);
+
 	out = rpmsg_pack_sg_list(tx_info->sg, 0, RPMSG_VAR_VIRTQUEUE_NUM,
 					(char *)msg, sizeof(*msg) + len);
 	mutex_lock(&vrp->tx_lock);
@@ -751,13 +729,9 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	/* add message to the remote processor's virtqueue */
 	err = virtqueue_add_outbuf(vrp->svq, tx_info->sg, out, tx_info, GFP_KERNEL);
 	if (err) {
-		/*
-		 * need to reclaim the buffer here, otherwise it's lost
-		 * (memory won't leak, but rpmsg won't use it again for TX).
-		 * this will wait for a buffer management overhaul.
-		 */
+		/* need to reclaim the buffer here, otherwise it's lost */
 		dev_err(dev, "virtqueue_add_outbuf failed: %d\n", err);
-		BUG_ON(err == -ENOMEM);
+		free_tx_buf(vrp, tx_info);
 		goto out;
 	}
 	/* tell the remote processor it has a pending message to read */
@@ -1062,7 +1036,8 @@ static int rpmsg_create_genpool(struct virtproc_info *vrp)
 	int ret = 0;
 
 	vrp->num_bufs = virtqueue_get_vring_size(vrp->svq);
-	vrp->pool_size = vrp->num_bufs * PAGE_SIZE;
+	vrp->pool_size = (vrp->num_bufs / 2) * PAGE_SIZE +
+					(vrp->num_bufs / 2) * RPMSG_BUF_SIZE;
 	vrp->bufs_va = dma_alloc_coherent(vrp->pdev, vrp->pool_size,
 						&vrp->vbufs_dma, GFP_KERNEL);
 	if (!vrp->bufs_va) {
@@ -1093,10 +1068,10 @@ err:
 
 static int rpmsg_find_vqs(struct virtproc_info *vrp, struct device **pdev)
 {
-	vq_callback_t *vq_cbs[2];
+	vq_callback_t *vq_cbs[3];
 	vrh_callback_t *vrh_cbs[1];
-	const char *names[2] = {"send", "var"};
-	struct virtqueue *vqs[2];
+	const char *names[3] = {"input", "output", "var"};
+	struct virtqueue *vqs[3];
 	struct virtio_device *vdev = vrp->vdev;
 	const char *dname = dev_name(vdev->dev.parent);
 	int err;
@@ -1114,15 +1089,17 @@ static int rpmsg_find_vqs(struct virtproc_info *vrp, struct device **pdev)
 		dev_err(&vdev->dev, "failed vrh creation %x\n",err);
 		return err;
 	}
-	vq_cbs[0] = rpmsg_xmit_done;
-	vq_cbs[1] = rpmsg_var_recv_done;
-	err = vdev->config->find_vqs(vdev, 2, vqs, vq_cbs, names);
+	vq_cbs[0] = rpmsg_recv_done;
+	vq_cbs[1] = rpmsg_xmit_done;
+	vq_cbs[2] = rpmsg_var_recv_done;
+	err = vdev->config->find_vqs(vdev, 3, vqs, vq_cbs, names);
 	if (err){
 		dev_err(&vdev->dev, "failed vqs creation %x\n",err);
 		return err;
 	}
-	vrp->svq = vqs[0];
-	vrp->vvq = vqs[1];
+	vrp->rvq = vqs[0];
+	vrp->svq = vqs[1];
+	vrp->vvq = vqs[2];
 
 	return 0;
 }
@@ -1144,7 +1121,6 @@ static void *__rpmsg_alloc_pages(struct device *dev, size_t size,
 static int rpmsg_probe(struct virtio_device *vdev)
 {
 	struct virtproc_info *vrp;
-	void *bufs_va = NULL;
 	int err = 0;
 	size_t total_buf_space;
 
@@ -1170,36 +1146,11 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		vrp->num_bufs = virtqueue_get_vring_size(vrp->svq) * 2;
 	else
 		vrp->num_bufs = MAX_RPMSG_NUM_BUFS;
-#if 0
-	total_buf_space = vrp->num_bufs * RPMSG_BUF_SIZE;
 
-	dev_info(&vdev->dev, "vring_size svq %d vvq %d vrh %d num_bufs %d total_buf_space %zu\n",
-			virtqueue_get_vring_size(vrp->svq),
-			virtqueue_get_vring_size(vrp->vvq),
-			vrp->vrh->vring.num, vrp->num_bufs, total_buf_space);
-
-	/* allocate coherent memory for the buffers */
-	bufs_va = dma_alloc_coherent(vrp->pdev, total_buf_space, &vrp->bufs_dma,
-								GFP_KERNEL);
-	if (!bufs_va) {
-		dev_err(&vdev->dev, "failed bufs_va %p\n",bufs_va);
-		err = -ENOMEM;
-		goto vqs_del;
-	}
-
-	dev_info(&vdev->dev, "buffers: va %p, dma 0x%llx\n", bufs_va,
-				(unsigned long long)vrp->bufs_dma);
-
-	/* half the buffers is dedicated for RX */
-	vrp->rbufs = bufs_va;
-
-	/* and half is dedicated for TX */
-	vrp->sbufs = bufs_va + total_buf_space / 2;
-#endif
 	err = rpmsg_create_genpool(vrp);
 	if (err){
 		dev_err(&vdev->dev, "failed var size pool creation %x\n",err);
-		goto free_coherent;
+		goto vqs_del;
 	}
 
 	dev_info(&vdev->dev, "vring_size svq %d vvq %d vrh %d num_bufs %d total_buf_space %zu\n",
@@ -1228,7 +1179,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		if (!vrp->ns_ept) {
 			dev_err(&vdev->dev, "failed to create the ns ept\n");
 			err = -ENOMEM;
-			goto free_coherent;
+			goto free_coherent_genpool;
 		}
 	}
 
@@ -1246,7 +1197,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		err = rpmsg_map_fixed_buf_pool(vrp, vrp->pool_size);
 		if(err < 0)
 			dev_err(&vrp->vdev->dev, "rpmsg remote buffer mapping failed\n");
-#if 0
+
 		create_dummy_channel_addr(&chinfo);
 
 		rpdev = rpmsg_create_channel(vrp, &chinfo);
@@ -1254,18 +1205,14 @@ static int rpmsg_probe(struct virtio_device *vdev)
 			dev_err(&vdev->dev, "rpmsg_create_channel failed\n");
 
 		create_dummy_rpmsg_ept(vrp, rpdev, &chinfo);
-#endif
 	}
 
 	dev_info(&vdev->dev, "rpmsg %s is online\n",(vrp->is_bsp ?
 							"host":"lproc"));
 	return 0;
 
-free_coherent:
-#if 0
-	dma_free_coherent(vrp->pdev, total_buf_space, bufs_va,
-				vrp->bufs_dma);
-#endif
+free_coherent_genpool:
+	rpmsg_destroy_genpool(vrp);
 vqs_del:
 	vdev->config->del_vqs(vrp->vdev);
 free_vrp:
@@ -1283,9 +1230,6 @@ static int rpmsg_remove_device(struct device *dev, void *data)
 static void rpmsg_remove(struct virtio_device *vdev)
 {
 	struct virtproc_info *vrp = vdev->priv;
-#if 0
-	size_t total_buf_space = vrp->num_bufs * RPMSG_BUF_SIZE;
-#endif
 	int ret;
 
 	vdev->config->reset(vdev);
@@ -1300,9 +1244,7 @@ static void rpmsg_remove(struct virtio_device *vdev)
 	idr_destroy(&vrp->endpoints);
 
 	vdev->config->del_vqs(vrp->vdev);
-#if 0
-	dma_free_coherent(vrp->pdev, total_buf_space, vrp->rbufs, vrp->bufs_dma);
-#endif
+
 	rpmsg_destroy_genpool(vrp);
 
 	kfree(vrp);
@@ -1366,8 +1308,10 @@ subsys_initcall(rpmsg_init);
 
 static void __exit rpmsg_fini(void)
 {
+#if 0
 	destroy_workqueue(rpmsg_virtio_cfg_wq);
 	destroy_workqueue(rpmsg_virtio_rcv_wq);
+#endif
 	unregister_virtio_driver(&virtio_ipc_driver);
 	bus_unregister(&rpmsg_bus);
 }

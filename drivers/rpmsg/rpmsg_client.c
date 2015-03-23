@@ -44,6 +44,10 @@ static const char driver_name[] = "rpmsg_client";
 /* Globals */
 static struct rpmsg_client_device *rcdev;
 
+int rpmsg_bsp_addr = 1024;
+module_param(rpmsg_bsp_addr, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(rpmsg_bsp_addr, "BSP's RPMSG Address");
+
 int rpmsg_open(struct inode *inode, struct file *f)
 {
 	struct rpmsg_client_vdev *rvdev;
@@ -301,6 +305,9 @@ static int rpmsg_client_probe(struct rpmsg_channel *rpdev)
 	struct device *device = NULL;
 	dev_t devno;
 
+	if(rpdev->dst == RPMSG_ADDR_ANY)	//Hack for AP
+		rpdev->dst = rpmsg_bsp_addr;
+
 	dev_info(&rpdev->dev, "new channel: 0x%x -> 0x%x!\n",
 					rpdev->src, rpdev->dst);
 	rcdev = kzalloc(sizeof(*rcdev), GFP_KERNEL);
@@ -335,8 +342,8 @@ static int rpmsg_client_probe(struct rpmsg_channel *rpdev)
 		goto cdevice_create_fail;
 	}
 	rcdev->rpdev = rpdev;
-	dev_info(&rpdev->dev, "device %s%d created!\n", RPMSG_CLIENT_DEV,
-								rcdev->id);
+	dev_info(&rpdev->dev, "device %s%d created MAJOR(%d) MINOR(%d)!\n",
+			RPMSG_CLIENT_DEV, rcdev->id, MAJOR(devno),MINOR(devno));
 	INIT_LIST_HEAD(&rcdev->recvqueue);
 	init_waitqueue_head(&rcdev->recvwait);
 	spin_lock_init(&rcdev->recv_spinlock);

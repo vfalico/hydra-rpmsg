@@ -18,6 +18,16 @@ extern int dummy_lproc_set_ap_callback(void (*fn)(void *), void *data);
 static struct platform_device *localproc_device;
 struct dummy_rproc_resourcetable *lrsc = &dummy_remoteproc_resourcetable;
 
+#define CONFIG_HOMOGENEOUS_AP	1
+
+#ifdef CONFIG_HOMOGENEOUS_AP
+static int vrh_id_map[RVDEV_NUM_VRINGS] = { 2, -1, -1, -1 };
+static int vrg_id_map[RVDEV_NUM_VRINGS] = { 1,  0,  3, -1 };
+#else
+static int vrh_id_map[RVDEV_NUM_VRINGS] = { 0, -1, -1, -1 };
+static int vrg_id_map[RVDEV_NUM_VRINGS] = { 1,  2,  3, -1 };
+#endif
+
 struct lproc {
 	int max_notifyid;
 	struct device *dev;
@@ -258,13 +268,15 @@ static struct virtqueue *lp_find_vq(struct virtio_device *vdev,
 	if (id >= ARRAY_SIZE(lvdev->vring))
 		return ERR_PTR(-EINVAL);
 
-	for (i = 0; i < ARRAY_SIZE(lvdev->vring); i++) {
-		lvring = &lvdev->vring[i];
+	i = vrg_id_map[id];
 
-		/* Use vring not already in use */
-		if (!lvring->rvringh && !lvring->vq)
-			break;
-	}
+	BUG_ON(i == -1);
+
+	lvring = &lvdev->vring[i];
+
+	BUG_ON(lvring->vq != NULL);
+	BUG_ON(lvring->rvringh != NULL);
+
 
 	if (i == ARRAY_SIZE(lvdev->vring))
 		return ERR_PTR(-EINVAL);
@@ -319,25 +331,26 @@ static irqreturn_t lproc_vq_interrupt(struct lproc *lproc, int notifyid)
 		lvring = &lvdev->vring[notifyid];
 		switch (notifyid) {
 			case 0:
+			case 1:
 				ret = vring_interrupt(1, lvring->vq);
 				break;
-			case 1:
+			case 2:
 				if (lvring->rvringh && lvring->rvringh->vringh_cb){
 					lvring->rvringh->vringh_cb(&lvring->rvdev->vdev,
 							&lvring->rvringh->vrh); 
 					ret = IRQ_HANDLED;
 				} else {
-					printk(KERN_INFO "%s: Failed interrupt!",
-						"notifyid %d ", __func__,
+					printk(KERN_INFO "%s: Failed interrupt!"
+						"notifyid %d", __func__,
 								notifyid);
 					ret = IRQ_NONE;
 				}
 				break;
-			case 2:
+			case 3:
 				ret = vring_avail_interrupt(1, lvring->vq);
 				break;
 			default:
-				printk(KERN_INFO "%s: Failed interrupt!",
+				printk(KERN_INFO "%s: Failed interrupt!"
 						"notifyid %d ", __func__,
 								notifyid);
 				ret = IRQ_NONE;
@@ -428,16 +441,15 @@ static struct vringh *lp_find_vrh(struct virtio_device *vdev,
 	if (id >= ARRAY_SIZE(lvdev->vring))
 		return ERR_PTR(-EINVAL);
 
-	/* Find available slot for a new host vring */
-	for (i = 0; i < ARRAY_SIZE(lvdev->vring); i++) {
-		lvring = &lvdev->vring[i];
 
-		/* HACK:: TODO
-		 * Use vring not already in use
-		 * */
-		if (!lvring->vq && (i == 1) && !lvring->rvringh)
-			break;
-	}
+	/* Find available slot for a new host vring */
+	i = vrh_id_map[id];
+
+	BUG_ON(i == -1);
+
+	lvring = &lvdev->vring[i];
+	BUG_ON(lvring->vq != NULL);
+	BUG_ON(lvring->rvringh != NULL);
 
 	if (i == ARRAY_SIZE(lvdev->vring))
 		return ERR_PTR(-ENODEV);

@@ -470,7 +470,7 @@ struct rproc {
 
 /* we currently support only two vrings per rvdev */
 
-#define RVDEV_NUM_VRINGS 3
+#define RVDEV_NUM_VRINGS 4
 
 /**
  * struct rproc_vringh - remoteproc host vring

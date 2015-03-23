@@ -300,11 +300,17 @@ static struct rproc_ops dummy_rproc_ops = {
 static int dummy_rproc_probe(struct platform_device *pdev)
 {
 	struct rproc *rproc;
+	struct dummy_transport *tport;
 	int ret;
 
-	rproc = rproc_alloc(&pdev->dev, DRV_NAME, &dummy_rproc_ops, NULL, 0);
+	rproc = rproc_alloc(&pdev->dev, DRV_NAME, &dummy_rproc_ops, NULL,
+							sizeof (*tport));
 	if (!rproc)
 		return -ENOMEM;
+
+	tport = rproc->priv;
+	tport->rproc = rproc;
+	tport->ops.copy = memcpy;
 
 	pdev->dev.coherent_dma_mask = DMA_BIT_MASK(64);
 	pdev->dev.dma_mask = &pdev->dev.coherent_dma_mask;

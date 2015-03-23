@@ -19,6 +19,9 @@
 #ifndef VIRTIO_RPMSG_H
 #define VIRTIO_RPMSG_H
 
+/*
+ * RPMSG_MAX_IOV_SIZE should be MAX_BUF_SIZE/PAGE_SIZE + 1
+ */
 #define	RPMSG_MAX_IOV_SIZE	32
 #define RPMSG_VAR_VIRTQUEUE_NUM	32
 #define MAX_BUF_SIZE	(64 * 1024)

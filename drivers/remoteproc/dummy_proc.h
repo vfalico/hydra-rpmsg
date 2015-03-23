@@ -47,8 +47,19 @@ struct dummy_rproc_resourcetable {
 	struct fw_rsc_vdev_vring	rsc_ring0;
 	struct fw_rsc_vdev_vring	rsc_ring1;
 	struct fw_rsc_vdev_vring	rsc_ring2;
+	struct fw_rsc_vdev_vring	rsc_ring3;
 	struct fw_rsc_vdev_config	rsc_vdev_cfg;
 };
 
+struct dummy_trans_ops {
+	int (*copy)(void *to, void *from, size_t n);
+};
+
+struct dummy_transport {
+	struct rproc *rproc;
+	void *priv;
+	struct dummy_trans_ops ops;
+	struct platform_device *pdev;
+};
 
 #endif /* DUMMY_PROC_H */

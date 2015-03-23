@@ -56,7 +56,7 @@ static void dummy_rpmsg_cb(struct rpmsg_channel *rpdev, void *data, int len,
 void create_dummy_channel_addr(struct rpmsg_channel_info *chinfo)
 {
 	strncpy(chinfo->name, "lproc", sizeof(chinfo->name));
-	chinfo->src = 1048;
+	chinfo->src = 2048;
 	chinfo->dst = RPMSG_ADDR_ANY;
 }
 
@@ -71,17 +71,11 @@ void create_dummy_rpmsg_ept(struct virtproc_info *vrp,
 
 	memset(&msg, 0, sizeof(msg));
 
-	dev_dbg(dev,"%s: vrp %p\n",__func__,vrp);
-
 	strncpy(msg.name, chinfo->name, sizeof(msg.name));
 
 	msg.addr = chinfo->src;	//TODO hack till we use idr to get one.
 	msg.flags |= RPMSG_NS_CREATE;
 
-	ept = rpmsg_create_ept(rpdev, dummy_rpmsg_cb, NULL, rpdev->src);
-	if (!ept) {
-		dev_err(dev, "failed to create the ns ept\n");
-	}
 	ret = rpmsg_sendto(rpdev, &msg, sizeof(msg), RPMSG_NS_ADDR);
 	if (ret)
 		dev_err(dev, "failed to announce service %d\n", ret);

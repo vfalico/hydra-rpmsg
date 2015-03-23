@@ -30,6 +30,17 @@ static void print_usage(void)
 }
 
 #define TEST_INPUT_OPTS		"c:t:n:s:r:e:w:h"
+void __random(int *buf, int len)
+{
+	unsigned int seed, i, val, times = len / sizeof(int);
+	FILE* urandom = fopen("/dev/urandom", "r");
+	fread(&seed, sizeof(int), 1, urandom);
+	fclose(urandom);
+	srand(seed);
+
+	for(i=0; i < times; i++)
+		buf[i] = rand();
+}
 
 static void dump_args(struct rpmsg_test_args *targs)
 {
@@ -93,33 +104,48 @@ static struct rpmsg_test_args *rpmsg_get_test_args(int argc, char *argv[])
 	}
 	return targs;
 }
+void __dump_buf(int *buf, int len)
+{
+	int i, times, t = len/sizeof(int);
+	times = t < 16 ? t : 16;
+
+	for(i=0; i < times; i+=4) {
+		printf("crpmsg[%d]: %x %x %x %x %x\n",i, buf[i], buf[i+1], buf[i+2], buf[i+3]);
+	}
+}
+
 void rpmsg_multikern_ipc_test(int fd, struct rpmsg_test_args *targs)
 {
-	char *sbuf = NULL, *rbuf = NULL;
+	void *sbuf = NULL, *rbuf = NULL;
 	int i,ret;
 
-	ret = ioctl(fd, RPMSG_CLIENT_CREATE_EPT_IOCTL, targs->ept_addr);
-	if (ret < 0) {
-		printf(" IOCTL failed %s %s\n", path, strerror(errno));
-		return;
+	if(targs->ept_addr) {
+		ret = ioctl(fd, RPMSG_CLIENT_CREATE_EPT_IOCTL, targs->ept_addr);
+		if (ret < 0) {
+			printf(" IOCTL failed %s %s\n", path, strerror(errno));
+			return;
+		}
 	}
+
 	if (targs->sbuf_size) {
-		sbuf = (char *) malloc(targs->sbuf_size);
+		sbuf = malloc(targs->sbuf_size);
 		for(i = 0; i < targs->num_runs; i++) {
+			__random(sbuf, targs->sbuf_size);
 			if (write(fd, sbuf, targs->sbuf_size) < targs->sbuf_size) {
 				printf("Could not write to %s %s\n", path, strerror(errno));
 				goto err;
 			}
 		}
 	}
+
 	if(targs->rbuf_size) {
-		rbuf = (char *) malloc(targs->rbuf_size);
+		rbuf = malloc(targs->rbuf_size);
 		for(i = 0; i < targs->num_runs; i++) {
 			if (read(fd, rbuf, targs->rbuf_size) < 0){
 				printf("Could not read from %s %s\n", path, strerror(errno));
 				goto err;
 			}
-			printf("(%s)\n",rbuf);
+			__dump_buf(rbuf, targs->rbuf_size);
 		}
 	}
 err:
