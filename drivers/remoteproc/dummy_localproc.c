@@ -73,28 +73,28 @@ struct dummy_rproc_resourcetable dummy_remoteproc_resourcetable
 	.rsc_ring0 = {
 		.da =		0,			/* we don't (??) care about the da */
 		.align =	PAGE_SIZE,		/* alignment */
-		.num =		512,			/* number of buffers */
+		.num =		128,			/* number of buffers */
 		.notifyid =	0,			/* magic number for IPC */
 		.reserved =	0,			/* reserved - 0 */
 	},
 	.rsc_ring1 = {
 		.da =		0,			/* we don't (??) care about the da */
 		.align =	PAGE_SIZE,		/* alignment */
-		.num =		512,			/* number of buffers */
+		.num =		128,			/* number of buffers */
 		.notifyid =	0,			/* magic number for IPC */
 		.reserved =	0,			/* reserved - 0 */
 	},
 	.rsc_ring2 = {
 		.da =		0,			/* we don't (??) care about the da */
 		.align =	PAGE_SIZE,		/* alignment */
-		.num =		512,			/* number of buffers */
+		.num =		128,			/* number of buffers */
 		.notifyid =	0,			/* magic number for IPC */
 		.reserved =	0,			/* reserved - 0 */
 	},
 	.rsc_ring3 = {
 		.da =		0,			/* we don't (??) care about the da */
 		.align =	PAGE_SIZE,		/* alignment */
-		.num =		128,			/* number of buffers */
+		.num =		32,			/* number of buffers */
 		.notifyid =	0,			/* magic number for IPC */
 		.reserved =	0,			/* reserved - 0 */
 	}

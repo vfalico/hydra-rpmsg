@@ -24,7 +24,7 @@
  */
 #define	RPMSG_MAX_IOV_SIZE	32
 #define RPMSG_VAR_VIRTQUEUE_NUM	32
-#define MAX_BUF_SIZE	(64 * 1024)
+#define MAX_BUF_SIZE	(32 * 1024)
 
 struct buf_info {
 	size_t len;
